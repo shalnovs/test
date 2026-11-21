@@ -18,6 +18,7 @@ function run(command,args){const r=spawnSync(command,args,{stdio:'inherit',env:p
 run('xcode-select',['-p']);
 run('rustup',['target','add','aarch64-apple-darwin','x86_64-apple-darwin']);
 run('cargo',['test','--locked','-p','family-core']);
+run(process.execPath,['node_modules/vitest/vitest.mjs','run']);
 const args=['node_modules/@tauri-apps/cli/tauri.js','build','--ci','--target','universal-apple-darwin','--bundles','app,dmg'];
 if(publicBuild)args.push('--config','src-tauri/tauri.ci.conf.json');
 args.push('--','--locked');

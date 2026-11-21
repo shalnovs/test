@@ -1,6 +1,7 @@
 app/node_modules/
 app/target/
 app/dist/
+app/public/face-detection/
 Mac-готово/
 *.sqlite
 *.familyzip

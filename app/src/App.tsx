@@ -24,7 +24,10 @@ import { AppContext, useArchive } from './context';
 import { Avatar, Empty, MediaImage } from './components';
 import { People, PersonPanel } from './People';
 import { Tree } from './Tree';
-import { Photos, PhotoViewer } from './Photos';
+import { Photos } from './Photos';
+import { PhotoViewer } from './PhotoViewer';
+import { FeaturedPhoto } from './FeaturedPhoto';
+import { useRotatingSelection } from './useRotatingSelection';
 import { Texts } from './Texts';
 import { Exchange } from './Exchange';
 const nav = [
@@ -182,7 +185,7 @@ export default function App() {
               <FolderOpen size={17} />
               Открыть / создать архив
             </button>
-            <span className="app-version">Родословная 1.0 · Локальный архив</span>
+            <span className="app-version">Родословная 1.1 · Локальный архив</span>
           </div>
         </aside>
         <div className="app-main">
@@ -199,7 +202,7 @@ export default function App() {
           </header>
           <main className={'page page-' + page}>
             {page === 'home' ? (
-              <Overview />
+              <Overview key={archive.tree_id} />
             ) : page === 'tree' ? (
               <Tree />
             ) : page === 'people' ? (
@@ -253,6 +256,7 @@ function Overview() {
   const { archive, navigate, person, photo, text } = useArchive();
   const d = archive.data;
   const photos = d.media.filter((m) => m.kind === 'photo' && m.thumb);
+  const rotating = useRotatingSelection(photos, d.texts);
   const featured = d.people.find((p) => p.external_id === 'I1') || d.people[0];
   const stats = [
     ['people', 'Люди', d.people.length, Users],
@@ -314,12 +318,10 @@ function Overview() {
               <ArrowUpRight size={16} />
             </button>
           </div>
+          <p className="rotation-caption">Случайные фотографии и истории · обновляются каждую минуту</p>
           <div className="featured-photos">
-            {photos.slice(0, 3).map((m) => (
-              <button key={m.id} onClick={() => photo(m.id)}>
-                <MediaImage id={m.id} alt={m.title} />
-                <strong>{m.title}</strong>
-              </button>
+            {rotating.photos.map((m) => (
+              <FeaturedPhoto key={m.id} media={m} />
             ))}
           </div>
           {!photos.length && <Empty>Добавьте первую семейную фотографию.</Empty>}
@@ -330,7 +332,7 @@ function Overview() {
               <ArrowUpRight size={16} />
             </button>
           </div>
-          {d.texts.slice(0, 2).map((t) => (
+          {rotating.stories.map((t) => (
             <button className="story-preview" key={t.id} onClick={() => text(t.id)}>
               <BookOpen size={23} />
               <div>

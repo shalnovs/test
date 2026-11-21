@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type ReactEventHandler } from 'react';
 import { X, Search, Image as ImageIcon, LoaderCircle } from 'lucide-react';
 import { fullName, initials, mediaUrl, type Item } from './api';
 import { useArchive } from './context';
@@ -11,7 +11,7 @@ export function MediaImage({
   thumb?: boolean;
   alt: string;
   className?: string;
-  onLoad?: () => void;
+  onLoad?: ReactEventHandler<HTMLImageElement>;
 }) {
   const [src, setSrc] = useState('');
   const [error, setError] = useState(false);
@@ -50,15 +50,17 @@ export function PersonPicker({
   onChange,
   empty = 'Выберите человека',
   exclude = [],
+  disabled = false,
 }: {
   value: string;
   onChange: (id: string) => void;
   empty?: string;
   exclude?: string[];
+  disabled?: boolean;
 }) {
   const { archive } = useArchive();
   return (
-    <select aria-label={empty} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select aria-label={empty} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
       <option value="">{empty}</option>
       {[...archive.data.people]
         .filter((p) => !exclude.includes(p.id))
