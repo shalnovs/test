@@ -1,0 +1,6 @@
+app/node_modules/
+app/target/
+app/dist/
+Mac-готово/
+*.sqlite
+*.familyzip

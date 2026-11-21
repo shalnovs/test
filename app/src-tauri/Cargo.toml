@@ -1,0 +1,18 @@
+[package]
+name = "rodoslovnaya"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "rodoslovnaya_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+family-core = { path = "../crates/family-core" }
+serde_json = "1"

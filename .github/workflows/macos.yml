@@ -1,0 +1,35 @@
+name: macOS installer
+on:
+  workflow_dispatch:
+  push:
+    branches: [macos-build]
+    paths: ['app/**', '.github/workflows/macos.yml']
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Install locked frontend dependencies
+        run: npx --yes pnpm@11.25.0 install --frozen-lockfile
+      - name: Build and verify universal installer
+        run: node scripts/build-macos.mjs --public
+      - name: Save installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Rodoslovnaya-macOS-Intel-and-Apple-Silicon
+          path: Mac-готово/*.dmg
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error

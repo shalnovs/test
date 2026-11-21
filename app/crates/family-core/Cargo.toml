@@ -1,0 +1,17 @@
+[package]
+name = "family-core"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.38", features = ["bundled", "backup"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+sha2 = "0.10"
+base64 = "0.22"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
