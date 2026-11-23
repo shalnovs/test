@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { isTauri } from '@tauri-apps/api/core';
+import { installNativeClose } from './nativeClose';
+import { useSelectedPerson } from './selectedPerson';
 import {
   Home,
   GitBranch,
@@ -18,6 +19,12 @@ import {
   Undo2,
   Leaf,
   Download,
+  CalendarDays,
+  MapPin,
+  CalendarRange,
+  ScanFace,
+  Copy,
+  Files,
 } from 'lucide-react';
 import { api, chooseLibrary, clearMedia, fullName, openUrl, plainText, type Archive, type Item } from './api';
 import { AppContext, useArchive } from './context';
@@ -30,23 +37,38 @@ import { FeaturedPhoto } from './FeaturedPhoto';
 import { useRotatingSelection } from './useRotatingSelection';
 import { Texts } from './Texts';
 import { Exchange } from './Exchange';
+import { Events, EventPanel } from './Events';
+import { FamilyMap } from './FamilyMap';
+import { ArchiveCleanup } from './ArchiveCleanup';
+import { Faces } from './Faces';
+import { RelatedMaterials } from './RelatedMaterials';
+import type { MaterialSelection } from './materials';
 const nav = [
   ['home', 'Обзор', Home],
   ['tree', 'Дерево', GitBranch],
   ['people', 'Люди', Users],
   ['photos', 'Фотоальбом', Images],
+  ['documents', 'Документы', Files],
+  ['faces', 'Поиск лиц', ScanFace],
+  ['events', 'События', CalendarRange],
+  ['calendar', 'Календарь', CalendarDays],
+  ['map', 'Карта', MapPin],
   ['texts', 'Тексты', BookOpen],
   ['sources', 'Источники', Library],
+  ['cleanup', 'Дубли и корзина', Copy],
   ['exchange', 'Обмен ветками', ArrowLeftRight],
   ['history', 'История', History],
 ] as const;
 const titles = Object.fromEntries(nav.map(([key, title]) => [key, title]));
 export default function App() {
   const [archive, setArchive] = useState<Archive | null>(null);
+  const [selectedPersonId, selectPerson] = useSelectedPerson(archive);
   const [page, setPage] = useState('home');
   const [personId, setPerson] = useState('');
   const [photoId, setPhoto] = useState('');
   const [textId, setText] = useState('');
+  const [eventId, setEvent] = useState('');
+  const [related, setRelated] = useState<MaterialSelection | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [error, setError] = useState('');
@@ -61,29 +83,16 @@ export default function App() {
     const timeout = setTimeout(() => setToast(''), 5500);
     return () => clearTimeout(timeout);
   }, [toast]);
-  useEffect(() => {
-    if (!isTauri()) return;
-    let unlisten: (() => void) | undefined;
-    import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
-      getCurrentWindow()
-        .onCloseRequested((e) => {
-          if (
-            window.__archiveDirty &&
-            !window.confirm('В тексте есть несохранённые изменения. Закрыть приложение без сохранения?')
-          )
-            e.preventDefault();
-        })
-        .then((fn) => (unlisten = fn)),
-    );
-    return () => unlisten?.();
-  }, []);
+  useEffect(() => installNativeClose((error) => setError(String(error))), []);
   const leave = () => !window.__archiveDirty || window.confirm('Текст изменён. Перейти без сохранения?');
   const navigate = (target: string) => {
     if (!leave()) return;
     window.__archiveDirty = false;
     setPage(target);
+    setRelated(null);
     setPerson('');
     setPhoto('');
+    setEvent('');
   };
   async function run<T>(action: () => Promise<T>, message?: string): Promise<T | undefined> {
     setBusy(true);
@@ -100,18 +109,31 @@ export default function App() {
     }
   }
   const person = (id: string) => {
+    selectPerson(id);
+    setRelated(null);
+    setEvent('');
     setPhoto('');
     setPerson(id);
   };
   const photo = (id: string) => {
+    setRelated(null);
+    setEvent('');
     setPerson('');
     setPhoto(id);
+  };
+  const event = (id: string) => {
+    setRelated(null);
+    setPerson('');
+    setPhoto('');
+    setEvent(id);
   };
   const text = (id: string) => {
     if (!leave()) return;
     window.__archiveDirty = false;
     setText(id);
+    setRelated(null);
     setPage('texts');
+    setEvent('');
     setPerson('');
     setPhoto('');
   };
@@ -122,9 +144,11 @@ export default function App() {
       if (!path) return;
       await api('switch_library', { path });
       clearMedia();
+      setRelated(null);
       setPerson('');
       setPhoto('');
       setText('');
+      setEvent('');
       setPage('home');
     }, 'Архив открыт');
   };
@@ -148,7 +172,21 @@ export default function App() {
     );
   return (
     <AppContext.Provider
-      value={{ archive, reload, run, notify: setToast, person, photo, text, navigate, busy }}
+      value={{
+        archive,
+        reload,
+        run,
+        notify: setToast,
+        person,
+        photo,
+        text,
+        event,
+        browse: setRelated,
+        navigate,
+        busy,
+        selectedPersonId,
+        selectPerson,
+      }}
     >
       <div className="app-shell">
         <aside className="sidebar">
@@ -185,7 +223,7 @@ export default function App() {
               <FolderOpen size={17} />
               Открыть / создать архив
             </button>
-            <span className="app-version">Родословная 1.1 · Локальный архив</span>
+            <span className="app-version">Родословная 1.6 · Локальный архив</span>
           </div>
         </aside>
         <div className="app-main">
@@ -204,11 +242,21 @@ export default function App() {
             {page === 'home' ? (
               <Overview key={archive.tree_id} />
             ) : page === 'tree' ? (
-              <Tree />
+              <Tree key={archive.tree_id} />
             ) : page === 'people' ? (
               <People />
             ) : page === 'photos' ? (
-              <Photos />
+              <Photos key={`${archive.tree_id}:photos`} />
+            ) : page === 'documents' ? (
+              <Photos key={`${archive.tree_id}:documents`} documents />
+            ) : page === 'faces' ? (
+              <Faces key={archive.tree_id} />
+            ) : page === 'cleanup' ? (
+              <ArchiveCleanup key={archive.tree_id} />
+            ) : page === 'events' || page === 'calendar' ? (
+              <Events key={`${archive.tree_id}:${page}`} calendar={page === 'calendar'} />
+            ) : page === 'map' ? (
+              <FamilyMap key={archive.tree_id} />
             ) : page === 'texts' ? (
               <Texts selected={textId} onSelect={text} />
             ) : page === 'sources' ? (
@@ -223,6 +271,8 @@ export default function App() {
       </div>
       {personId && <PersonPanel key={personId} id={personId} onClose={() => setPerson('')} />}
       {photoId && <PhotoViewer key={photoId} id={photoId} onClose={() => setPhoto('')} />}
+      {eventId && <EventPanel key={eventId} id={eventId} onClose={() => setEvent('')} />}
+      {related && <RelatedMaterials selection={related} onClose={() => setRelated(null)} />}
       {busy && (
         <div className="busy-indicator">
           <LoaderCircle size={18} className="spin" />
@@ -253,11 +303,14 @@ export default function App() {
   );
 }
 function Overview() {
-  const { archive, navigate, person, photo, text } = useArchive();
+  const { archive, navigate, person, photo, text, selectedPersonId } = useArchive();
   const d = archive.data;
   const photos = d.media.filter((m) => m.kind === 'photo' && m.thumb);
   const rotating = useRotatingSelection(photos, d.texts);
-  const featured = d.people.find((p) => p.external_id === 'I1') || d.people[0];
+  const featured =
+    d.people.find((p) => p.id === selectedPersonId) ||
+    d.people.find((p) => p.external_id === 'I1') ||
+    d.people[0];
   const stats = [
     ['people', 'Люди', d.people.length, Users],
     ['tree', 'Семейные пары', d.relationships.filter((r) => r.kind === 'partner').length, GitBranch],
@@ -496,3 +549,4 @@ function HistoryPage() {
     </>
   );
 }
+

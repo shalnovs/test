@@ -12,6 +12,11 @@ use std::{
 };
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+pub mod geography;
+mod maintenance;
+mod purge;
+mod media_import;
+mod recognition;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub type Data = BTreeMap<String, BTreeMap<String, Value>>;
@@ -24,6 +29,7 @@ pub const KINDS: &[&str] = &[
     "text_links",
     "sources",
     "facts",
+    "events",
 ];
 
 /// Populate a new installation from its read-only bundled archive, without replacing user data.
@@ -84,6 +90,57 @@ fn stable(s: &str) -> String {
 }
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+fn snapshot_hash(d: &Data) -> String {
+    let mut compatible = d.clone();
+    if compatible.get("events").is_some_and(|v| v.is_empty()) {
+        compatible.remove("events");
+    }
+    digest(&serde_json::to_vec(&compatible).unwrap())
+}
+fn string_ids(v: &Value, key: &str) -> Vec<String> {
+    v.get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+fn date_bounds(value: &str) -> Option<(chrono::NaiveDate, chrono::NaiveDate)> {
+    let parts: Vec<&str> = value.split('-').collect();
+    if parts.is_empty()
+        || parts.len() > 3
+        || parts[0].len() != 4
+        || parts.iter().skip(1).any(|p| p.len() != 2)
+    {
+        return None;
+    }
+    let year = parts[0].parse::<i32>().ok()?;
+    if !(1..=9999).contains(&year) {
+        return None;
+    }
+    let month = if parts.len() > 1 {
+        parts[1].parse::<u32>().ok()?
+    } else {
+        1
+    };
+    let day = if parts.len() > 2 {
+        parts[2].parse::<u32>().ok()?
+    } else {
+        1
+    };
+    let start = chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    let end = if parts.len() == 3 {
+        start
+    } else if parts.len() == 1 {
+        chrono::NaiveDate::from_ymd_opt(year, 12, 31)?
+    } else {
+        (28..=31)
+            .rev()
+            .find_map(|d| chrono::NaiveDate::from_ymd_opt(year, month, d))?
+    };
+    Some((start, end))
 }
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
@@ -176,11 +233,63 @@ pub fn validate(d: &Data) -> Result<()> {
         }
     }
     for p in rows(d, "people") {
+        if p.get("autobiography").is_some_and(|v| !v.is_string()) {
+            return Err("Автобиография должна содержать текст".into());
+        }
         if name(p).trim().is_empty() {
             return Err("У человека должно быть указано имя или фамилия".into());
         }
         if !s(p, "avatar_id").is_empty() && !has(d, "media", s(p, "avatar_id")) {
             return Err("Портрет ссылается на отсутствующий файл".into());
+        }
+        if let Some(crop) = p.get("avatar_crop").filter(|v| !v.is_null()) {
+            let n = |k| crop.get(k).and_then(Value::as_f64).unwrap_or(f64::NAN);
+            if s(p, "avatar_id").is_empty()
+                || ![n("x"), n("y"), n("w"), n("h")]
+                    .iter()
+                    .all(|v| v.is_finite())
+                || n("x") < 0.0
+                || n("y") < 0.0
+                || n("w") <= 0.0
+                || n("h") <= 0.0
+                || n("x") + n("w") > 1.00001
+                || n("y") + n("h") > 1.00001
+            {
+                return Err(
+                    "Область портрета должна находиться внутри выбранной фотографии".into(),
+                );
+            }
+        }
+    }
+    for media in rows(d, "media") {
+        // Legacy free-form dates stay readable. Edited dates carry explicit precision.
+        if let Some(precision) = media.get("date_precision") {
+            let precision = precision.as_str().unwrap_or("");
+            let length = match precision {
+                "day" => 10,
+                "month" => 7,
+                "year" => 4,
+                _ => return Err("Выберите точность даты фотографии".into()),
+            };
+            let value = media
+                .get("date")
+                .and_then(Value::as_str)
+                .ok_or("Укажите дату фотографии")?;
+            if !value.is_empty() && (value.len() != length || date_bounds(value).is_none()) {
+                return Err("Некорректная дата фотографии или документа".into());
+            }
+        }
+        let lat = media.get("latitude").filter(|v| !v.is_null());
+        let lon = media.get("longitude").filter(|v| !v.is_null());
+        if (lat.is_some() || lon.is_some())
+            && (!lat
+                .and_then(Value::as_f64)
+                .is_some_and(|x| x.is_finite() && (-90.0..=90.0).contains(&x))
+                || !lon
+                    .and_then(Value::as_f64)
+                    .is_some_and(|x| x.is_finite() && (-180.0..=180.0).contains(&x)))
+        {
+            return Err("Проверьте координаты фотографии или документа".into());
         }
     }
     let mut graph: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -268,6 +377,55 @@ pub fn validate(d: &Data) -> Result<()> {
             return Err("Сведения ссылаются на отсутствующего человека".into());
         }
     }
+    for e in rows(d, "events") {
+        if s(e, "title").trim().is_empty() {
+            return Err("Укажите заголовок события".into());
+        }
+        for key in ["start_date", "end_date"] {
+            if !s(e, key).is_empty() && date_bounds(s(e, key)).is_none() {
+                return Err("Дата события: укажите ГГГГ, ГГГГ-ММ или ГГГГ-ММ-ДД".into());
+            }
+        }
+        if !s(e, "end_date").is_empty() {
+            let start = date_bounds(s(e, "start_date")).ok_or("Укажите начало события")?;
+            if date_bounds(s(e, "end_date")).unwrap().1 < start.0 {
+                return Err("Окончание события раньше начала".into());
+            }
+        }
+        for (key, kind) in [("person_ids", "people"), ("media_ids", "media")] {
+            if let Some(value) = e.get(key) {
+                let list = value
+                    .as_array()
+                    .ok_or("Некорректный список участников или фотографий")?;
+                if list
+                    .iter()
+                    .any(|x| x.as_str().is_none_or(|id| !has(d, kind, id)))
+                {
+                    return Err(
+                        "Событие ссылается на отсутствующего участника или фотографию".into(),
+                    );
+                }
+            }
+        }
+        if !s(e, "cover_media_id").is_empty()
+            && !string_ids(e, "media_ids").contains(&s(e, "cover_media_id").to_string())
+        {
+            return Err("Главное фото должно входить в фотографии события".into());
+        }
+        let lat = e.get("latitude").filter(|v| !v.is_null());
+        let lon = e.get("longitude").filter(|v| !v.is_null());
+        if lat.is_some() || lon.is_some() {
+            if !lat
+                .and_then(Value::as_f64)
+                .is_some_and(|x| x.is_finite() && (-90.0..=90.0).contains(&x))
+                || !lon
+                    .and_then(Value::as_f64)
+                    .is_some_and(|x| x.is_finite() && (-180.0..=180.0).contains(&x))
+            {
+                return Err("Проверьте координаты события".into());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -293,9 +451,11 @@ impl Engine {
         let conn = Connection::open(root.join("family.sqlite")).map_err(|e| e.to_string())?;
         conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
           CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS pending_file_deletions(path TEXT PRIMARY KEY);
           CREATE TABLE IF NOT EXISTS entities(kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL CHECK(json_valid(data)),PRIMARY KEY(kind,id));
           CREATE INDEX IF NOT EXISTS entity_person ON entities(kind,json_extract(data,'$.person_id'));
           CREATE TABLE IF NOT EXISTS history(id TEXT PRIMARY KEY,title TEXT NOT NULL,created_at TEXT NOT NULL,before_json TEXT NOT NULL,after_hash TEXT NOT NULL,undone INTEGER NOT NULL DEFAULT 0);
+          CREATE TABLE IF NOT EXISTS analysis_cache(kind TEXT NOT NULL,media_id TEXT NOT NULL,sha256 TEXT NOT NULL,version TEXT NOT NULL,payload TEXT NOT NULL CHECK(json_valid(payload)),updated_at TEXT NOT NULL,PRIMARY KEY(kind,media_id,version));
           PRAGMA user_version=1;").map_err(|e|e.to_string())?;
         conn.execute("INSERT OR IGNORE INTO meta VALUES('tree_id',?1)", [id()])
             .map_err(|e| e.to_string())?;
@@ -304,7 +464,9 @@ impl Engine {
             [],
         )
         .map_err(|e| e.to_string())?;
-        Ok(Self { root, conn })
+        let mut engine = Self { root, conn };
+        engine.drain_file_deletions()?;
+        Ok(engine)
     }
     fn meta(&self, key: &str) -> String {
         self.conn
@@ -347,7 +509,7 @@ impl Engine {
             return Ok(json!({"changed":false}));
         }
         let hid = id();
-        let hash = digest(&serde_json::to_vec(d).unwrap());
+        let hash = snapshot_hash(d);
         let tx = self.conn.transaction().map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM entities", [])
             .map_err(|e| e.to_string())?;
@@ -366,7 +528,7 @@ impl Engine {
     }
     fn history(&self) -> Result<Value> {
         let mut st=self.conn.prepare("SELECT id,title,created_at,undone,after_hash FROM history ORDER BY rowid DESC LIMIT 100").map_err(|e|e.to_string())?;
-        let current = digest(&serde_json::to_vec(&self.data()?).unwrap());
+        let current = snapshot_hash(&self.data()?);
         let rows=st.query_map([],|r|{let h:String=r.get(4)?;let undone:i32=r.get(3)?;Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"created_at":r.get::<_,String>(2)?,"undone":undone!=0,"can_undo":undone==0&&h==current}))}).map_err(|e|e.to_string())?;
         Ok(Value::Array(
             rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -382,7 +544,7 @@ impl Engine {
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(|e| e.to_string())?;
-        if undone != 0 || digest(&serde_json::to_vec(&self.data()?).unwrap()) != hash {
+        if undone != 0 || snapshot_hash(&self.data()?) != hash {
             return Err(
                 "После этого действия появились другие изменения. Сначала отмените их.".into(),
             );
@@ -424,14 +586,37 @@ impl Engine {
         Ok(self.root.join(p))
     }
     fn add_media(&mut self, p: &Value) -> Result<Value> {
+        self.check_import_tree(p)?;
         let raw = B64.decode(s(p, "base64")).map_err(|e| e.to_string())?;
         if raw.is_empty() || raw.len() > 256 * 1024 * 1024 {
             return Err("Размер файла должен быть от 1 байта до 256 МБ".into());
         }
         let hash = digest(&raw);
+        let requested_kind = s(p, "kind");
+        if !requested_kind.is_empty() && !["photo", "document"].contains(&requested_kind) {
+            return Err("Выберите фотоальбом или документы".into());
+        }
+        let media_kind = if requested_kind == "document" || !s(p, "mime").starts_with("image/") {
+            "document"
+        } else {
+            "photo"
+        };
         let mut d = self.data()?;
-        if let Some(m) = rows(&d, "media").find(|m| s(m, "sha256") == hash) {
-            return Ok(json!({"id":s(m,"id"),"duplicate":true}));
+        let duplicates=self.media_matches(&hash)?;
+        if !duplicates.is_empty(){
+            let action=s(p,"duplicate_action");
+            if action.is_empty(){return Ok(json!({"needs_confirmation":true,"duplicates":duplicates}));}
+            let existing=duplicates.iter().find(|m|s(m,"id")==s(p,"duplicate_id")).ok_or("Выбранный дубликат изменился. Повторите проверку.")?;
+            if action=="use"{
+                if maintenance::trashed(existing){return Err("Этот материал находится в корзине. Выберите восстановление или отдельную копию.".into());}
+                return Ok(json!({"id":s(existing,"id"),"reused":true}));
+            }
+            if action=="restore"{
+                if !maintenance::trashed(existing){return Err("Материал уже восстановлен. Повторите проверку.".into());}
+                self.restore_items(&json!({"kind":"media","ids":[s(existing,"id")]}))?;
+                return Ok(json!({"id":s(existing,"id"),"restored":true}));
+            }
+            if action!="copy"{return Err("Подтвердите действие с найденным дубликатом".into());}
         }
         let filename = s(p, "filename");
         let ext = Path::new(filename)
@@ -443,7 +628,8 @@ impl Engine {
             return Err("Некорректное расширение файла".into());
         }
         let rel = format!("media/{hash}.{ext}");
-        fs::write(self.safe_file(&rel)?, raw).map_err(|e| e.to_string())?;
+        let file_path=self.safe_file(&rel)?;
+        if !file_path.exists(){fs::write(file_path, raw).map_err(|e| e.to_string())?;}
         let mut thumb = String::new();
         if let Some(t) = p.get("thumbnail").and_then(Value::as_str) {
             if !t.is_empty() {
@@ -452,14 +638,15 @@ impl Engine {
                     return Err("Слишком большая миниатюра".into());
                 }
                 thumb = format!("thumbs/{hash}.jpg");
-                fs::write(self.safe_file(&thumb)?, bytes).map_err(|e| e.to_string())?;
+                let thumb_path=self.safe_file(&thumb)?;
+                if !thumb_path.exists(){fs::write(thumb_path, bytes).map_err(|e| e.to_string())?;}
             }
         }
         let mid = id();
         put(
             &mut d,
             "media",
-            json!({"id":mid,"title":p.get("title").and_then(Value::as_str).unwrap_or(filename),"filename":filename,"file":rel,"thumb":thumb,"mime":s(p,"mime"),"sha256":hash,"kind":if s(p,"mime").starts_with("image/"){"photo"}else{"document"},"description":"","date":"","place":"","source_id":"","created_at":now()}),
+            json!({"id":mid,"title":p.get("title").and_then(Value::as_str).unwrap_or(filename),"filename":filename,"file":rel,"thumb":thumb,"mime":s(p,"mime"),"sha256":hash,"kind":media_kind,"description":"","date":"","place":"","source_id":"","created_at":now()}),
         );
         self.commit(&d, "Добавлен файл в архив")?;
         Ok(json!({"id":mid}))
@@ -479,7 +666,7 @@ impl Engine {
         }
         v["updated_at"] = json!(now());
         let key = s(&v, "id").to_string();
-        if kind == "people" {
+        {
             if let Some(existing) = d[kind].get(&key) {
                 let mut merged = existing.clone();
                 for (k, val) in v.as_object().unwrap() {
@@ -491,9 +678,13 @@ impl Engine {
         put(&mut d, kind, v);
         if kind == "texts" {
             if let Some(subjects) = p.get("subjects").and_then(Value::as_array) {
+                let remove_links: BTreeSet<String> = rows(&d, "text_links")
+                    .filter(|l| maintenance::resolve(&d, "texts", s(l, "text_id")) == key)
+                    .map(|l| s(l, "id").to_string())
+                    .collect();
                 d.entry("text_links".into())
                     .or_default()
-                    .retain(|_, l| s(l, "text_id") != key);
+                    .retain(|id, _| !remove_links.contains(id));
                 for person in subjects.iter().filter_map(Value::as_str) {
                     put(
                         &mut d,
@@ -512,6 +703,11 @@ impl Engine {
         Ok(json!({"id":key,"result":result}))
     }
     fn remove(&mut self, p: &Value) -> Result<Value> {
+        if ["media", "texts"].contains(&s(p, "kind")) {
+            return self.trash_items(
+                &json!({"kind":s(p,"kind"),"ids":[s(p,"id")],"confirm_marked":p["confirm_marked"]}),
+            );
+        }
         let kind = s(p, "kind");
         if !KINDS.contains(&kind) {
             return Err("Неизвестный раздел".into());
@@ -525,12 +721,22 @@ impl Engine {
             items.remove(key);
         }
         if kind == "media" {
+            for event in d.entry("events".into()).or_default().values_mut() {
+                event["media_ids"] = json!(string_ids(event, "media_ids")
+                    .into_iter()
+                    .filter(|x| x != key)
+                    .collect::<Vec<_>>());
+                if s(event, "cover_media_id") == key {
+                    event["cover_media_id"] = json!("");
+                }
+            }
             d.entry("tags".into())
                 .or_default()
                 .retain(|_, v| s(v, "media_id") != key);
             for person in d.entry("people".into()).or_default().values_mut() {
                 if s(person, "avatar_id") == key {
                     person["avatar_id"] = json!("");
+                    person["avatar_crop"] = Value::Null;
                 }
             }
             for source in d.entry("sources".into()).or_default().values_mut() {
@@ -559,6 +765,12 @@ impl Engine {
             if ["id", "extra", "source_id", "external_id", "updated_at"].contains(&k.as_str()) {
                 continue;
             }
+            if k == "avatar_crop"
+                && !s(&target, "avatar_id").is_empty()
+                && s(&target, "avatar_id") != s(&old, "avatar_id")
+            {
+                continue;
+            }
             if blank(updated.get(k).unwrap_or(&Value::Null)) {
                 updated[k] = v.clone();
             } else if !blank(v) && target.get(k) != Some(v) {
@@ -578,6 +790,12 @@ impl Engine {
         d.get_mut("people").unwrap().remove(from);
         put(&mut d, "people", updated);
         let mapping = HashMap::from([(from.to_string(), to.to_string())]);
+        for event in d.entry("events".into()).or_default().values_mut() {
+            event["person_ids"] = json!(string_ids(event, "person_ids")
+                .into_iter()
+                .map(|x| if x == from { to.to_string() } else { x })
+                .collect::<BTreeSet<_>>());
+        }
         for kind in ["relationships", "tags", "text_links", "facts"] {
             for v in d.entry(kind.into()).or_default().values_mut() {
                 for key in ["person_id", "from_id", "to_id"] {
@@ -616,7 +834,7 @@ impl Engine {
         self.commit(&d, &format!("Объединены карточки: {}", name(&old)))
     }
     pub fn branch(&self, p: &Value) -> Result<Package> {
-        let all = self.data()?;
+        let all = maintenance::visible_data(&self.data()?);
         let mut selected: BTreeSet<String> = p
             .get("people_ids")
             .and_then(Value::as_array)
@@ -685,6 +903,7 @@ impl Engine {
             let mut person = person.clone();
             if !include_media {
                 person["avatar_id"] = json!("");
+                person["avatar_crop"] = Value::Null;
             }
             put(&mut d, "people", person);
         }
@@ -696,12 +915,30 @@ impl Engine {
         for f in rows(&all, "facts").filter(|v| selected.contains(s(v, "person_id"))) {
             put(&mut d, "facts", f.clone());
         }
+        for event in rows(&all, "events").filter(|v| {
+            mode == "all"
+                || string_ids(v, "person_ids")
+                    .iter()
+                    .any(|x| selected.contains(x))
+        }) {
+            let mut event = event.clone();
+            event["person_ids"] = json!(string_ids(&event, "person_ids")
+                .into_iter()
+                .filter(|x| selected.contains(x))
+                .collect::<Vec<_>>());
+            if !include_media {
+                event["media_ids"] = json!([]);
+                event["cover_media_id"] = json!("");
+            }
+            put(&mut d, "events", event);
+        }
         if include_media {
             for t in rows(&all, "tags").filter(|v| selected.contains(s(v, "person_id"))) {
                 put(&mut d, "tags", t.clone());
             }
             let mut mids: BTreeSet<String> =
                 rows(&d, "tags").map(|t| s(t, "media_id").into()).collect();
+            mids.extend(rows(&d, "events").flat_map(|e| string_ids(e, "media_ids")));
             mids.extend(
                 rows(&d, "people")
                     .map(|p| s(p, "avatar_id").to_string())
@@ -755,6 +992,9 @@ impl Engine {
                 v["attachment_id"] = json!("");
             }
             put(&mut d, "sources", v);
+        }
+        if d.get("events").is_some_and(|events| events.is_empty()) {
+            d.remove("events");
         }
         Ok(Package {
             format: "family-archive".into(),
@@ -977,6 +1217,7 @@ impl Engine {
                         "id",
                         "updated_at",
                         "avatar_id",
+                        "avatar_crop",
                         "source_id",
                         "external_id",
                         "extra",
@@ -1019,6 +1260,7 @@ impl Engine {
                 let mut v = incoming.clone();
                 v["id"] = json!(local_id);
                 v["avatar_id"] = json!("");
+                v["avatar_crop"] = Value::Null;
                 put(&mut d, "people", v);
                 added += 1;
             }
@@ -1031,9 +1273,13 @@ impl Engine {
         let mut media_map = HashMap::new();
         for m in rows(&package.data, "media") {
             let existing = rows(&d, "media")
-                .find(|local| !s(m, "sha256").is_empty() && s(local, "sha256") == s(m, "sha256"))
+                .find(|local| {
+                    !maintenance::trashed(local)
+                        && !s(m, "sha256").is_empty()
+                        && s(local, "sha256") == s(m, "sha256")
+                })
                 .map(|m| s(m, "id").to_string());
-            let mid = existing.unwrap_or_else(|| {
+            let mut mid = existing.unwrap_or_else(|| {
                 if has(&d, "media", s(m, "id")) {
                     stable(&format!(
                         "{}:media:{}:{}",
@@ -1045,6 +1291,9 @@ impl Engine {
                     s(m, "id").into()
                 }
             });
+            if d["media"].get(&mid).is_some_and(maintenance::trashed) {
+                mid = id();
+            }
             media_map.insert(s(m, "id").to_string(), mid.clone());
             if !has(&d, "media", &mid) {
                 let mut v = m.clone();
@@ -1058,6 +1307,8 @@ impl Engine {
                     let person = d.get_mut("people").unwrap().get_mut(local).unwrap();
                     if s(person, "avatar_id").is_empty() {
                         person["avatar_id"] = json!(mid);
+                        person["avatar_crop"] =
+                            incoming.get("avatar_crop").cloned().unwrap_or(Value::Null);
                     }
                 }
             }
@@ -1071,8 +1322,8 @@ impl Engine {
                 .cloned()
                 .unwrap_or_default());
             let iid = s(t, "id");
-            let key = if let Some(local) = d["texts"].get(iid) {
-                if local["content"] != v["content"] {
+            let mut key = if let Some(local) = d["texts"].get(iid) {
+                if maintenance::trashed(local) || local["content"] != v["content"] {
                     stable(&format!(
                         "{}:{iid}:{}",
                         package.origin_tree_id,
@@ -1084,6 +1335,9 @@ impl Engine {
             } else {
                 iid.into()
             };
+            if d["texts"].get(&key).is_some_and(maintenance::trashed) {
+                key = id();
+            }
             text_map.insert(iid.to_string(), key.clone());
             v["id"] = json!(key);
             if key != iid {
@@ -1093,6 +1347,51 @@ impl Engine {
             if !has(&d, "texts", &key) {
                 put(&mut d, "texts", v);
             }
+        }
+        for record in rows(&package.data, "events") {
+            let mut v = record.clone();
+            let participants = string_ids(record, "person_ids");
+            let mut seen_people = BTreeSet::new();
+            let mapped: Vec<String> = participants
+                .iter()
+                .filter_map(|p| people_map.get(p).cloned())
+                .filter(|id| seen_people.insert(id.clone()))
+                .collect();
+            if !participants.is_empty() && mapped.is_empty() {
+                continue;
+            }
+            v["person_ids"] = json!(mapped);
+            let mut seen_media = BTreeSet::new();
+            v["media_ids"] = json!(string_ids(record, "media_ids")
+                .iter()
+                .filter_map(|m| media_map.get(m).cloned())
+                .filter(|id| seen_media.insert(id.clone()))
+                .collect::<Vec<_>>());
+            v["cover_media_id"] = json!(media_map
+                .get(s(record, "cover_media_id"))
+                .cloned()
+                .unwrap_or_default());
+            let key = s(&v, "id").to_string();
+            if let Some(local) = d["events"].get(&key) {
+                let mut a = local.clone();
+                let mut b = v.clone();
+                a.as_object_mut().unwrap().remove("updated_at");
+                b.as_object_mut().unwrap().remove("updated_at");
+                if a == b {
+                    continue;
+                }
+                v["id"] = json!(stable(&format!(
+                    "{}:event:{key}:{}",
+                    package.origin_tree_id,
+                    digest(b.to_string().as_bytes())
+                )));
+                if has(&d, "events", s(&v, "id")) {
+                    continue;
+                }
+                v["title"] = json!(format!("{} — полученная версия", s(record, "title")));
+                conflicts += 1;
+            }
+            put(&mut d, "events", v);
         }
         for kind in ["relationships", "tags", "text_links", "facts", "sources"] {
             for record in rows(&package.data, kind) {
@@ -1212,19 +1511,32 @@ impl Engine {
     pub fn call(&mut self, op: &str, p: Value) -> Result<Value> {
         match op {
             "load" => {
-                let d = self.data()?;
+                let raw = self.data()?;
+                let d = maintenance::visible_data(&raw);
                 let mut public = json!({});
                 for k in KINDS {
                     public[*k] = json!(rows(&d, k).collect::<Vec<_>>());
                 }
                 Ok(
-                    json!({"data":public,"tree_id":self.meta("tree_id"),"title":self.meta("title"),"root":self.root,"history":self.history()?}),
+                    json!({"data":public,"trash":{"media":rows(&raw,"media").filter(|v|maintenance::trashed(v)).collect::<Vec<_>>(),"texts":rows(&raw,"texts").filter(|v|maintenance::trashed(v)).collect::<Vec<_>>()},"tree_id":self.meta("tree_id"),"title":self.meta("title"),"root":self.root,"history":self.history()?}),
                 )
             }
             "save" => self.save(&p),
+            "trash_preview" => self.trash_preview(&p),
+            "trash_items" => self.trash_items(&p),
+            "restore_items" => self.restore_items(&p),
+            "purge_preview" => self.purge_preview(&p),
+            "purge_items" => self.purge_items(&p),
+            "find_duplicates" => self.duplicates(&p),
+            "merge_duplicates" => self.merge_duplicates(&p),
+            "analysis_get" => self.analysis_get(&p),
+            "analysis_put" => self.analysis_put(&p),
+            "face_matches" => self.face_matches(&p),
+            "face_tag_batch" => self.face_tag_batch(&p),
             "remove" => self.remove(&p),
             "undo" => self.undo(s(&p, "id")),
             "add_media" => self.add_media(&p),
+            "check_media" => self.check_media(&p),
             "merge_people" => self.merge_people(&p),
             "switch_library" => {
                 let path = s(&p, "path");

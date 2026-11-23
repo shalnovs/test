@@ -1,5 +1,9 @@
 {
   "bundle": {
-    "resources": []
+    "resources": {
+      "../assets/places.sqlite": "places.sqlite",
+      "../assets/GeoNames-NOTICE.txt": "GeoNames-NOTICE.txt",
+      "../assets/places-manifest.json": "places-manifest.json"
+    }
   }
 }

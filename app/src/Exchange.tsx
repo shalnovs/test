@@ -24,6 +24,7 @@ const labels: Record<string, string> = {
   occupation: 'Занятие',
   residence: 'Место проживания',
   comment: 'Заметки',
+  autobiography: 'Автобиография',
   alive: 'Живёт',
   gender: 'Пол',
   email: 'Эл. почта',

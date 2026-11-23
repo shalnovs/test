@@ -2,10 +2,24 @@ import { useEffect, useState, useRef } from 'react';
 import { Mark, mergeAttributes } from '@tiptap/core';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Plus, BookOpen, Save, Bold, Italic, List, Link2, Unlink, Edit3, ArrowLeft } from 'lucide-react';
+import {
+  Plus,
+  BookOpen,
+  Save,
+  Bold,
+  Italic,
+  List,
+  Link2,
+  Unlink,
+  Edit3,
+  ArrowLeft,
+  Copy,
+  Trash2,
+} from 'lucide-react';
 import { api, fullName, plainText, mentionedPeople, type Item } from './api';
 import { useArchive } from './context';
 import { Chip, Empty, PersonPicker, SearchBox } from './components';
+import { TrashDialog } from './ArchiveCleanup';
 declare global {
   interface Window {
     __archiveDirty?: boolean;
@@ -35,7 +49,7 @@ const PersonLink = Mark.create({
   },
 });
 export function Texts({ selected, onSelect }: { selected: string; onSelect: (id: string) => void }) {
-  const { archive, run } = useArchive();
+  const { archive, run, navigate } = useArchive();
   const [q, setQ] = useState('');
   const [pid, setPid] = useState('');
   const current = archive.data.texts.find((t) => t.id === selected);
@@ -80,6 +94,10 @@ export function Texts({ selected, onSelect }: { selected: string; onSelect: (id:
         </button>
       </div>
       <div className="toolbar">
+        <button onClick={() => navigate('cleanup')}>
+          <Copy size={16} />
+          Дубли и корзина
+        </button>
         <SearchBox value={q} onChange={setQ} placeholder="Искать в названиях и содержании" />
         <PersonPicker value={pid} onChange={setPid} empty="Все люди" />
       </div>
@@ -111,6 +129,7 @@ function TextEditor({ text, onBack }: { text: Item; onBack: () => void }) {
   const [title, setTitle] = useState(text.title);
   const [author, setAuthor] = useState(text.author_id || '');
   const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [subjects, setSubjects] = useState<string[]>(
     archive.data.text_links.filter((l) => l.text_id === text.id).map((l) => l.person_id),
@@ -194,6 +213,20 @@ function TextEditor({ text, onBack }: { text: Item; onBack: () => void }) {
           Все тексты
         </button>
         <div className="row">
+          <button
+            className="icon-button danger-on-hover"
+            aria-label="Переместить текст в корзину"
+            title="В корзину"
+            onClick={() => {
+              if (
+                !dirty ||
+                window.confirm('Есть несохранённые изменения. Переместить сохранённый текст в корзину?')
+              )
+                setDeleting(true);
+            }}
+          >
+            <Trash2 size={18} />
+          </button>
           <span className={'save-state ' + (dirty ? 'dirty' : '')}>
             {dirty ? 'Есть несохранённые изменения' : 'Сохранено'}
           </span>
@@ -334,6 +367,17 @@ function TextEditor({ text, onBack }: { text: Item; onBack: () => void }) {
           </div>
         </aside>
       </div>
+      {deleting && (
+        <TrashDialog
+          kind="texts"
+          ids={[text.id]}
+          onClose={() => setDeleting(false)}
+          onDone={() => {
+            window.__archiveDirty = false;
+            onBack();
+          }}
+        />
+      )}
     </>
   );
 }

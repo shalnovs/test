@@ -1,0 +1,7 @@
+Natural Earth: land at 1:110m and populated places at 1:10m.
+Public domain. https://www.naturalearthdata.com/about/terms-of-use/
+Source: https://github.com/nvkelso/natural-earth-vector/tree/master/geojson
+Retrieved 2026-11-21. Place names and coordinates are an offline gazetteer;
+points indicate approximate city centres, not locations of family events.
+Optional online tiles: © OpenStreetMap contributors, ODbL.
+https://www.openstreetmap.org/copyright

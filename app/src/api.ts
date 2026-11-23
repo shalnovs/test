@@ -9,8 +9,16 @@ export type ArchiveData = {
   text_links: Item[];
   sources: Item[];
   facts: Item[];
+  events?: Item[];
 };
-export type Archive = { data: ArchiveData; tree_id: string; title: string; root: string; history: Item[] };
+export type Archive = {
+  data: ArchiveData;
+  tree_id: string;
+  title: string;
+  root: string;
+  history: Item[];
+  trash?: { media: Item[]; texts: Item[] };
+};
 export async function api<T = any>(op: string, payload: Record<string, any> = {}): Promise<T> {
   if (isTauri()) return invoke<T>('archive', { op, payload });
   const r = await fetch('/api', {
@@ -51,6 +59,9 @@ export function mentionedPeople(v: any): string[] {
 const mediaCache = new Map<string, Promise<string>>();
 export function clearMedia() {
   mediaCache.clear();
+}
+export function releaseMedia(id: string, thumb = false) {
+  mediaCache.delete(id + ':' + thumb);
 }
 export function mediaUrl(id: string, thumbnail = true): Promise<string> {
   const key = id + ':' + thumbnail;

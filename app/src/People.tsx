@@ -1,15 +1,21 @@
 import { useState } from 'react';
-import { Plus, ArrowUpRight, Edit3, Trash2, Check, Link2 } from 'lucide-react';
+import { Plus, ArrowUpRight, Edit3, Trash2, Check, Link2, Camera, CalendarDays } from 'lucide-react';
 import { api, dateLabel, fullName, years, mentionedPeople, type Item } from './api';
 import { useArchive } from './context';
 import { Avatar, Chip, Empty, Field, MediaImage, Modal, PersonPicker, SearchBox } from './components';
+import { MediaPicker } from './MediaPicker';
+import { familyEvents } from './eventData';
+import { eventPeriod } from './Events';
 export function People() {
   const { archive, person } = useArchive();
   const [q, setQ] = useState('');
   const [adding, setAdding] = useState(false);
   const list = archive.data.people
     .filter((p) =>
-      [fullName(p), p.birth_surname, p.birth_place].join(' ').toLowerCase().includes(q.toLowerCase()),
+      [fullName(p), p.birth_surname, p.second_surname, p.birth_place]
+        .join(' ')
+        .toLowerCase()
+        .includes(q.toLowerCase()),
     )
     .sort((a, b) => fullName(a).localeCompare(fullName(b), 'ru'));
   return (
@@ -48,13 +54,15 @@ export function People() {
   );
 }
 export function PersonForm({ person: original, onClose }: { person?: Item; onClose: () => void }) {
-  const { run, person, archive } = useArchive();
+  const { run, person, busy } = useArchive();
+  const [portraitOpen, setPortraitOpen] = useState(false);
   const [p, setP] = useState<any>(
     original || {
       given_name: '',
       surname: '',
       patronymic: '',
       birth_surname: '',
+      second_surname: '',
       gender: 'U',
       birth_date: '',
       death_date: '',
@@ -86,12 +94,21 @@ export function PersonForm({ person: original, onClose }: { person?: Item; onClo
           submit();
         }}
       >
+        <button type="button" className="portrait-edit-card" onClick={() => setPortraitOpen(true)}>
+          <Avatar p={p} size="lg" />
+          <span>
+            <strong>{p.avatar_id ? 'Изменить главное фото' : 'Добавить главное фото'}</strong>
+            <small>Выберите из альбома или загрузите с компьютера</small>
+          </span>
+          <Camera size={24} />
+        </button>
         <div className="form-grid">
           {[
             ['surname', 'Фамилия'],
             ['given_name', 'Имя'],
             ['patronymic', 'Отчество'],
             ['birth_surname', 'Фамилия при рождении'],
+            ['second_surname', 'Вторая фамилия'],
             ['birth_date', 'Дата рождения'],
             ['death_date', 'Дата смерти'],
             ['birth_place', 'Место рождения'],
@@ -124,41 +141,52 @@ export function PersonForm({ person: original, onClose }: { person?: Item; onClo
               <option value="unknown">Неизвестно</option>
             </select>
           </Field>
-          <Field label="Портрет" wide>
-            <select value={p.avatar_id || ''} onChange={(e) => set('avatar_id', e.target.value)}>
-              <option value="">Без портрета</option>
-              {archive.data.media
-                .filter((m) => m.mime?.startsWith('image/'))
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.title}
-                  </option>
-                ))}
-            </select>
-          </Field>
           <Field label="Заметки" wide>
             <textarea rows={4} value={p.comment || ''} onChange={(e) => set('comment', e.target.value)} />
+          </Field>
+          <Field label="Автобиография" wide>
+            <textarea
+              rows={10}
+              value={p.autobiography || ''}
+              placeholder="Рассказ человека о своей жизни, семье, учёбе, работе и важных событиях…"
+              onChange={(e) => set('autobiography', e.target.value)}
+            />
           </Field>
         </div>
         <footer className="modal-footer">
           <button type="button" onClick={onClose}>
             Отмена
           </button>
-          <button className="primary" type="submit">
+          <button className="primary" type="submit" disabled={busy}>
             <Check size={17} />
             Сохранить
           </button>
         </footer>
       </form>
+      {portraitOpen && (
+        <MediaPicker
+          portrait
+          personId={p.id || ''}
+          selected={p.avatar_id ? [p.avatar_id] : []}
+          crop={p.avatar_crop}
+          onClose={() => setPortraitOpen(false)}
+          onChoose={(ids, crop) => {
+            setP({ ...p, avatar_id: ids[0] || '', avatar_crop: crop || null });
+            setPortraitOpen(false);
+          }}
+        />
+      )}
     </Modal>
   );
 }
 export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }) {
-  const { archive, person, photo, text, run } = useArchive();
+  const { archive, person, photo, text, run, event: openEvent } = useArchive();
   const [edit, setEdit] = useState(false);
   const [link, setLink] = useState(false);
   const [merge, setMerge] = useState(false);
+  const [portraitOpen, setPortraitOpen] = useState(false);
   const d = archive.data;
+  const [biographyOpen, setBiographyOpen] = useState(false);
   const p = d.people.find((p) => p.id === id);
   if (!p) return null;
   const relations = d.relationships.filter((r) => r.from_id === id || r.to_id === id);
@@ -171,7 +199,10 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
       d.text_links.some((l) => l.person_id === id && l.text_id === t.id) ||
       mentionedPeople(t.content).includes(id),
   );
-  const facts = d.facts.filter((f) => f.person_id === id);
+  const facts = d.facts.filter(
+    (f) => f.person_id === id && ['alternative', 'merged_record'].includes(f.kind),
+  );
+  const events = familyEvents(d).filter((e) => e.person_ids?.includes(id));
   return (
     <>
       <div className="drawer-backdrop" onClick={onClose} />
@@ -183,7 +214,17 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
           </button>
         </div>
         <div className="person-hero">
-          <Avatar p={p} size="lg" />
+          <button
+            className="profile-portrait-button"
+            onClick={() => setPortraitOpen(true)}
+            title="Изменить главное фото профиля"
+          >
+            <Avatar p={p} size="lg" />
+            <span>
+              <Camera size={16} />
+              {p.avatar_id ? 'Изменить фото' : 'Добавить фото'}
+            </span>
+          </button>
           <h2>{fullName(p)}</h2>
           <span className="muted">{years(p)}</span>
           <button className="subtle" onClick={() => setEdit(true)}>
@@ -194,6 +235,7 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
         {p.birth_surname && p.birth_surname !== p.surname && (
           <p className="center muted">При рождении: {p.birth_surname}</p>
         )}
+        {p.second_surname && <p className="center muted">Вторая фамилия: {p.second_surname}</p>}
         <div className="detail-list">
           {[
             ['Рождение', p.birth_date ? dateLabel(p.birth_date) : ''],
@@ -212,6 +254,20 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
             ))}
         </div>
         {p.comment && <p className="person-note">{p.comment}</p>}
+        <section className="person-autobiography">
+          <div className="section-title">
+            <h3>Автобиография</h3>
+            <button className="text-button" onClick={() => setBiographyOpen(true)}>
+              <Edit3 size={15} />
+              {p.autobiography ? 'Изменить' : 'Добавить'}
+            </button>
+          </div>
+          {p.autobiography ? (
+            <p className="autobiography-text">{p.autobiography}</p>
+          ) : (
+            <p className="muted">Рассказ о жизни своими словами.</p>
+          )}
+        </section>
         <section>
           <div className="section-title">
             <h3>Семья</h3>
@@ -288,9 +344,33 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
             </button>
           ))}
         </section>
+        <section>
+          <div className="section-title">
+            <h3>События</h3>
+            <span className="count">{events.length}</span>
+          </div>
+          {events.map((e) => (
+            <button key={e.id} className="person-event-row" onClick={() => openEvent?.(e.id)}>
+              <CalendarDays size={19} />
+              <span>
+                <strong>{e.title}</strong>
+                <small>
+                  {eventPeriod(e)}
+                  {e.place ? ' · ' + e.place : ''}
+                </small>
+              </span>
+              <ArrowUpRight size={16} />
+            </button>
+          ))}
+          {!events.length && (
+            <p className="muted">
+              События можно добавить в разделе «События» и указать этого человека участником.
+            </p>
+          )}
+        </section>
         {facts.length > 0 && (
           <section>
-            <h3>События и сведения</h3>
+            <h3>Дополнительные сведения</h3>
             {facts.map((f) => (
               <article className={'fact ' + (f.kind === 'alternative' ? 'alternative' : '')} key={f.id}>
                 <strong>{f.title || f.field}</strong>
@@ -319,9 +399,73 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
         </div>
       </aside>
       {edit && <PersonForm person={p} onClose={() => setEdit(false)} />}
+      {biographyOpen && <AutobiographyEditor person={p} onClose={() => setBiographyOpen(false)} />}
       {link && <RelationshipForm root={id} onClose={() => setLink(false)} />}
       {merge && <MergePeople root={id} onClose={() => setMerge(false)} />}
+      {portraitOpen && (
+        <MediaPicker
+          portrait
+          personId={id}
+          selected={p.avatar_id ? [p.avatar_id] : []}
+          crop={p.avatar_crop}
+          onClose={() => setPortraitOpen(false)}
+          onChoose={async (ids, crop) => {
+            const ok = await run(async () => {
+              await api('save', {
+                kind: 'people',
+                record: { id, avatar_id: ids[0] || '', avatar_crop: crop || null },
+                title: 'Изменено главное фото профиля',
+              });
+              return true;
+            }, 'Главное фото сохранено');
+            if (ok) setPortraitOpen(false);
+          }}
+        />
+      )}
     </>
+  );
+}
+export function AutobiographyEditor({ person, onClose }: { person: Item; onClose: () => void }) {
+  const { run, busy } = useArchive();
+  const [value, setValue] = useState(person.autobiography || '');
+  return (
+    <Modal title={`Автобиография · ${fullName(person)}`} onClose={onClose} wide>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const saved = await run(async () => {
+            await api('save', {
+              kind: 'people',
+              record: { id: person.id, autobiography: value },
+              title: 'Изменена автобиография',
+            });
+            return true;
+          }, 'Автобиография сохранена');
+          if (saved) onClose();
+        }}
+      >
+        <Field label="Автобиография" wide>
+          <textarea
+            className="autobiography-editor"
+            rows={16}
+            autoFocus
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder="Моя жизнь, семья, учёба, работа и важные события…"
+          />
+        </Field>
+        <p className="muted">Текст сохраняется в карточке человека и передаётся вместе с его веткой.</p>
+        <footer className="modal-footer">
+          <button type="button" onClick={onClose}>
+            Отмена
+          </button>
+          <button type="submit" className="primary" disabled={busy}>
+            <Check size={16} />
+            Сохранить автобиографию
+          </button>
+        </footer>
+      </form>
+    </Modal>
   );
 }
 function RelationshipForm({ root, onClose }: { root: string; onClose: () => void }) {

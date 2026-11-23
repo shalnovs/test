@@ -1,1 +1,1 @@
-{"identifier":"default","description":"Local family archive window","windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","opener:allow-open-url","opener:allow-reveal-item-in-dir"]}
+{"identifier":"default","description":"Local family archive window","windows":["main"],"permissions":["core:default","core:window:allow-destroy","dialog:allow-open","dialog:allow-save","dialog:allow-confirm","opener:allow-open-url","opener:allow-reveal-item-in-dir"]}

@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { Archive, Item } from './api';
+import type { MaterialSelection } from './materials';
 export type AppContextType = {
   archive: Archive;
   reload: () => Promise<void>;
@@ -10,6 +11,10 @@ export type AppContextType = {
   text: (id: string) => void;
   navigate: (page: string) => void;
   busy: boolean;
+  selectedPersonId?: string;
+  selectPerson?: (id: string) => void;
+  event?: (id: string) => void;
+  browse?: (selection: MaterialSelection) => void;
 };
 export const AppContext = createContext<AppContextType>(null!);
 export const useArchive = () => useContext(AppContext);

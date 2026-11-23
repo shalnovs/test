@@ -1,5 +1,7 @@
-Родословная — локальное приложение для семейного архива.
+Родословная 1.6 — локальный семейный архив
 
-Tauri 2, React и SQLite. Сценарий `.github/workflows/macos.yml` создаёт универсальный установщик macOS для Intel и Apple Silicon. Семейные базы, фотографии и документы в этот репозиторий не включены.
+Tauri 2, React и SQLite. Семейные базы, фотографии и документы в репозиторий не включены.
 
-Локальная сборка на Mac: в папке `app` выполните `npx pnpm@11.25.0 install --frozen-lockfile`, затем `node scripts/build-macos.mjs --public`. Нужны Node.js 24, Rust и Xcode Command Line Tools. Результат появляется в `Mac-готово`.
+Сборка на macOS: в `app` выполните `npx pnpm@11.25.0 install --frozen-lockfile`; из корня проекта — `python3 tools/build-place-catalog.py`; затем в `app` — `node scripts/build-macos.mjs --public`. Нужны Node.js 24, Rust и Xcode Command Line Tools.
+
+GitHub Actions собирает универсальный DMG для Intel и Apple Silicon. Общедоступный справочник GeoNames готовится при сборке, модели распознавания берутся из зафиксированного npm-пакета с проверкой SHA-256. Семейный архив переносится отдельно.

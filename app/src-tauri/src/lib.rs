@@ -1,8 +1,12 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tauri::Manager;
 struct AppState {
-    engine: Mutex<family_core::Engine>,
+    engine: Arc<Mutex<family_core::Engine>>,
     settings: Option<PathBuf>,
+    places: PathBuf,
 }
 #[tauri::command]
 async fn archive(
@@ -10,21 +14,34 @@ async fn archive(
     op: String,
     payload: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let mut engine = state.engine.lock().map_err(|e| e.to_string())?;
-    let result = engine.call(&op, payload)?;
-    if op == "switch_library" {
-        if let Some(path) = &state.settings {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            std::fs::write(
-                path,
-                serde_json::to_vec(&engine.root).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| e.to_string())?;
+    let shared = state.engine.clone();
+    let settings = state.settings.clone();
+    let places = state.places.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if op == "search_places" {
+            return family_core::geography::search_places(
+                &places,
+                payload["query"].as_str().unwrap_or(""),
+            );
         }
-    }
-    Ok(result)
+        let mut engine = shared.lock().map_err(|e| e.to_string())?;
+        let result = engine.call(&op, payload)?;
+        if op == "switch_library" {
+            if let Some(path) = &settings {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&engine.root).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -56,7 +73,18 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             let engine = family_core::Engine::open(root).map_err(std::io::Error::other)?;
             app.manage(AppState {
-                engine: Mutex::new(engine),
+                engine: Arc::new(Mutex::new(engine)),
+                places: {
+                    let sibling = std::env::current_exe()?
+                        .parent()
+                        .unwrap()
+                        .join("places.sqlite");
+                    if sibling.is_file() {
+                        sibling
+                    } else {
+                        app.path().resource_dir()?.join("places.sqlite")
+                    }
+                },
                 settings: if isolated.is_some() {
                     None
                 } else {

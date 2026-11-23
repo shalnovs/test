@@ -1,4 +1,5 @@
 import './prepare-face-assets.mjs';
+import './prepare-recognition-assets.mjs';
 import { spawnSync } from 'node:child_process';
 for (const [script, args] of [
   ['node_modules/typescript/bin/tsc', ['-b']],

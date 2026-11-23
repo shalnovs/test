@@ -78,6 +78,12 @@ async function prepare(tags: Item[] = []) {
   });
   return stage;
 }
+function choosePerson(label: string, query: string, name: RegExp) {
+  const input = screen.getByRole('combobox', { name: label });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: query } });
+  fireEvent.click(screen.getByRole('option', { name }));
+}
 function drag(stage: HTMLDivElement) {
   fireEvent.pointerDown(stage, { button: 0, pointerId: 1, clientX: 50, clientY: 40 });
   fireEvent.pointerMove(stage, { pointerId: 1, clientX: 150, clientY: 160 });
@@ -90,6 +96,7 @@ beforeEach(() => {
   HTMLElement.prototype.setPointerCapture = vi.fn();
   HTMLElement.prototype.hasPointerCapture = () => true;
   HTMLElement.prototype.releasePointerCapture = vi.fn();
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -109,9 +116,8 @@ describe('photo annotation', () => {
     const stage = await prepare([
       { id: 'tag1', media_id: 'm1', person_id: 'p1', comment: 'Existing source', x: null },
     ]);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Выбрать до выделения' }), {
-      target: { value: 'p1' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Сначала человек/ }));
+    choosePerson('Выбрать до выделения', 'Ан', /Тестовая Анна/);
     drag(stage);
     fireEvent.pointerUp(stage, { clientX: 150, clientY: 160 });
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
@@ -125,12 +131,11 @@ describe('photo annotation', () => {
   });
   it('keeps an unknown draft by the photograph until an explicit icon save', async () => {
     const stage = await prepare();
+    fireEvent.click(screen.getByRole('button', { name: /Сначала рамка/ }));
     drag(stage);
     expect(api).not.toHaveBeenCalled();
     expect(stage.contains(screen.getByRole('group', { name: 'Выбор человека для отметки' }))).toBe(true);
-    fireEvent.change(screen.getByRole('combobox', { name: 'Человек пока неизвестен' }), {
-      target: { value: 'p2' },
-    });
+    choosePerson('Человек пока неизвестен', 'Ив', /Тестовый Иван/);
     expect(api).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить отметку' }));
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
@@ -138,6 +143,7 @@ describe('photo annotation', () => {
   });
   it('cancels unknown selections and aborted drags without writing', async () => {
     const stage = await prepare();
+    fireEvent.click(screen.getByRole('button', { name: /Сначала рамка/ }));
     drag(stage);
     fireEvent.click(screen.getByRole('button', { name: 'Отменить отметку' }));
     fireEvent.pointerDown(stage, { button: 0, clientX: 50, clientY: 40 });
@@ -149,9 +155,8 @@ describe('photo annotation', () => {
   });
   it('retains a failed autosave for retry and reuses its ID', async () => {
     const stage = await prepare();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Выбрать до выделения' }), {
-      target: { value: 'p1' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Сначала человек/ }));
+    choosePerson('Выбрать до выделения', 'Ан', /Тестовая Анна/);
     vi.mocked(api).mockRejectedValueOnce(new Error('Disk unavailable'));
     drag(stage);
     await waitFor(() => expect(api).toHaveBeenCalledTimes(1));
@@ -178,9 +183,8 @@ describe('photo annotation', () => {
   });
   it('never saves or assigns identity to detected faces without a manual choice', async () => {
     const stage = await prepare();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Выбрать до выделения' }), {
-      target: { value: 'p1' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Сначала человек/ }));
+    choosePerson('Выбрать до выделения', 'Ан', /Тестовая Анна/);
     vi.mocked(detectFaces).mockResolvedValue([{ x: 0.3, y: 0.3, w: 0.2, h: 0.2 }]);
     fireEvent.click(screen.getByRole('button', { name: 'Найти лица' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Найденное лицо 1' }));
@@ -189,6 +193,27 @@ describe('photo annotation', () => {
     ).toBe('');
     expect(api).not.toHaveBeenCalled();
     expect(stage.querySelector('.tag-popover')).not.toBeNull();
+  });
+  it('spotlights a sidebar name without opening the card, and clears the spotlight', async () => {
+    const view = setup([{ id: 't1', media_id: 'm1', person_id: 'p1', x: 0.1, y: 0.2, w: 0.2, h: 0.3 }]);
+    fireEvent.load(await screen.findByAltText('Тестовое фото'));
+    fireEvent.click(view.container.querySelector('.tag-person')!);
+    expect(view.container.querySelector('.face-tag.highlighted')?.getAttribute('data-tag-id')).toBe('t1');
+    expect(view.container.querySelector('.spotlight-active')).not.toBeNull();
+    expect(person).not.toHaveBeenCalled();
+    expect(api).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Убрать выделение' }));
+    expect(view.container.querySelector('.face-tag.highlighted')).toBeNull();
+  });
+  it('requires an explicit scenario and handles a person without a frame honestly', async () => {
+    const stage = await prepare([{ id: 't1', media_id: 'm1', person_id: 'p1', x: null }]);
+    drag(stage);
+    expect(stage.querySelector('.draft')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Просмотр' }));
+    fireEvent.click(document.querySelector('.tag-person')!);
+    expect(screen.getByRole('status').textContent).toContain('пока нет рамки');
+    expect(stage.classList.contains('spotlight-active')).toBe(false);
+    expect(api).not.toHaveBeenCalled();
   });
 });
 

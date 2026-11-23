@@ -6,12 +6,16 @@ export function PhotoHotspots({
   people,
   editing = false,
   selected = '',
+  highlighted = '',
+  pulse = 0,
   onSelect,
 }: {
   tags: Item[];
   people: Item[];
   editing?: boolean;
   selected?: string;
+  highlighted?: string;
+  pulse?: number;
   onSelect: (tag: Item) => void;
 }) {
   return (
@@ -24,10 +28,11 @@ export function PhotoHotspots({
             : t.label || 'Неизвестный человек';
           return (
             <button
-              key={t.id}
+              key={`${t.id}:${highlighted === t.id ? pulse : 0}`}
               type="button"
               aria-label={name}
-              className={`face-tag ${editing ? 'editable' : 'view-only'} ${selected === t.id ? 'selected' : ''}`}
+              className={`face-tag ${editing ? 'editable' : 'view-only'} ${selected === t.id ? 'selected' : ''} ${highlighted === t.id ? 'highlighted' : ''}`}
+              data-tag-id={t.id}
               style={{
                 ...rectStyle(t as Item & Rect),
                 pointerEvents: editing && selected === t.id ? 'none' : undefined,

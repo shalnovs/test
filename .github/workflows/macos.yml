@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [macos-build]
-    paths: ['app/**', '.github/workflows/macos.yml']
+    paths: ['app/**', 'tools/build-place-catalog.py', '.github/workflows/macos.yml']
 permissions:
   contents: read
 jobs:
@@ -23,6 +23,8 @@ jobs:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - name: Install locked frontend dependencies
         run: npx --yes pnpm@11.25.0 install --frozen-lockfile
+      - name: Prepare public offline settlement catalog
+        run: python3 ../tools/build-place-catalog.py
       - name: Build and verify universal installer
         run: node scripts/build-macos.mjs --public
       - name: Save installer
