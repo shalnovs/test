@@ -223,7 +223,7 @@ export default function App() {
               <FolderOpen size={17} />
               Открыть / создать архив
             </button>
-            <span className="app-version">Родословная 1.6 · Локальный архив</span>
+            <span className="app-version">Родословная 1.6.1 · Локальный архив</span>
           </div>
         </aside>
         <div className="app-main">

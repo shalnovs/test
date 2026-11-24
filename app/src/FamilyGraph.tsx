@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -8,6 +8,7 @@ import {
   Position,
   ReactFlowProvider,
   useReactFlow,
+  type NodeChange,
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -82,9 +83,41 @@ function Canvas({
     simulation = useRef<ReturnType<typeof createFamilySimulation> | null>(null),
     dragging = useRef(false);
   const [positions, setPositions] = useState(new Map<string, { x: number; y: number }>()),
+    [measurements, setMeasurements] = useState(new Map<string, { width: number; height: number }>()),
     [hover, setHover] = useState(''),
     [paused, setPaused] = useState(false),
     [restart, setRestart] = useState(0);
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    // Controlled nodes must retain React Flow's measurements between simulation ticks.
+    // Dropping them resets both node visibility and the endpoints of every relationship.
+    if (changes.some((c) => c.type === 'dimensions' && c.dimensions)) {
+      setMeasurements((prev) => {
+        let next = prev;
+        for (const c of changes) {
+          if (c.type !== 'dimensions' || !c.dimensions) continue;
+          const old = prev.get(c.id);
+          if (old?.width === c.dimensions.width && old?.height === c.dimensions.height) continue;
+          if (next === prev) next = new Map(prev);
+          next.set(c.id, c.dimensions);
+        }
+        return next;
+      });
+    }
+    if (changes.some((c) => c.type === 'position' && c.position)) {
+      setPositions((prev) => {
+        let next = prev;
+        for (const c of changes) {
+          if (c.type !== 'position' || !c.position) continue;
+          const point = { x: c.position.x + 30, y: c.position.y + 30 };
+          const old = prev.get(c.id);
+          if (old?.x === point.x && old?.y === point.y) continue;
+          if (next === prev) next = new Map(prev);
+          next.set(c.id, point);
+        }
+        return next;
+      });
+    }
+  }, []);
   useEffect(() => {
     const sim = createFamilySimulation(
       model.nodes.map((n) => ({ ...n })),
@@ -133,6 +166,7 @@ function Canvas({
       id: n.id,
       type: 'person',
       position: { x: p.x - 30, y: p.y - 30 },
+      measured: measurements.get(n.id),
       draggable: n.id !== root,
       data: {
         person: archive.data.people.find((p) => p.id === n.id)!,
@@ -191,6 +225,8 @@ function Canvas({
         minZoom={0.05}
         maxZoom={2.2}
         nodesConnectable={false}
+        elementsSelectable={false}
+        deleteKeyCode={null}
         onNodeMouseEnter={(_, n) => setHover(n.id)}
         onNodeMouseLeave={() => setHover('')}
         onNodeDragStart={() => {
@@ -203,15 +239,7 @@ function Canvas({
             dragging.current = false;
           }, 0);
         }}
-        onNodesChange={(changes) =>
-          setPositions((prev) => {
-            const next = new Map(prev);
-            for (const c of changes)
-              if (c.type === 'position' && c.position)
-                next.set(c.id, { x: c.position.x + 30, y: c.position.y + 30 });
-            return next;
-          })
-        }
+        onNodesChange={onNodesChange}
       >
         <Background gap={30} color="#d4ded4" />
         <Controls showInteractive={false} />
