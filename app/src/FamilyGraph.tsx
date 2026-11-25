@@ -17,6 +17,7 @@ import { useArchive } from './context';
 import { Avatar } from './components';
 import { fullName, years, type Item } from './api';
 import { graphModel, createFamilySimulation } from './graphLayout';
+import { graphEdgeGeometry, tidyFamilyGraph } from './graphReadability';
 const colors: Record<string, string> = {
   parent: '#739f84',
   partner: '#c2a264',
@@ -80,12 +81,13 @@ function Canvas({
     [archive.data, root, mode, extended, group],
   );
   const previous = useRef(new Map<string, { x: number; y: number }>()),
+    arrangementKey = useRef(''),
     simulation = useRef<ReturnType<typeof createFamilySimulation> | null>(null),
     dragging = useRef(false);
   const [positions, setPositions] = useState(new Map<string, { x: number; y: number }>()),
     [measurements, setMeasurements] = useState(new Map<string, { width: number; height: number }>()),
     [hover, setHover] = useState(''),
-    [paused, setPaused] = useState(false),
+    [paused, setPaused] = useState(true),
     [restart, setRestart] = useState(0);
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     // Controlled nodes must retain React Flow's measurements between simulation ticks.
@@ -119,11 +121,21 @@ function Canvas({
     }
   }, []);
   useEffect(() => {
+    const key = JSON.stringify([
+      archive.tree_id,
+      model.nodes.map((n) => n.id).sort(),
+      model.links.map((l) => [l.id, l.source, l.target, l.kind]),
+    ]);
+    const seed =
+      arrangementKey.current === key && model.nodes.every((n) => previous.current.has(n.id))
+        ? previous.current
+        : tidyFamilyGraph(archive.data, root, mode, extended, group);
+    arrangementKey.current = key;
     const sim = createFamilySimulation(
       model.nodes.map((n) => ({ ...n })),
       model.links.map((l) => ({ ...l })),
       root,
-      previous.current,
+      seed,
     );
     simulation.current = sim;
     let last = 0;
@@ -132,7 +144,6 @@ function Canvas({
       previous.current = points;
       setPositions(points);
     };
-    sim.tick(35);
     publish();
     sim
       .on('tick', () => {
@@ -180,11 +191,8 @@ function Canvas({
   });
   const edges = model.links.map((l) => {
     const a = positions.get(l.source as string) || { x: 0, y: 0 },
-      b = positions.get(l.target as string) || { x: 0, y: 0 },
-      dx = b.x - a.x,
-      dy = b.y - a.y;
-    const side = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'Right' : 'Left') : dy > 0 ? 'Bottom' : 'Top';
-    const opposite = { Right: 'Left', Left: 'Right', Top: 'Bottom', Bottom: 'Top' }[side];
+      b = positions.get(l.target as string) || { x: 0, y: 0 };
+    const { side, opposite } = graphEdgeGeometry(a, b);
     const lit = !hover || l.source === hover || l.target === hover;
     return {
       id: l.id,
@@ -213,7 +221,9 @@ function Canvas({
     n.fy = release ? null : y + 30;
     n.x = x + 30;
     n.y = y + 30;
-    setPositions(new Map(sim.nodes().map((v) => [v.id, { x: v.x || 0, y: v.y || 0 }])));
+    const points = new Map(sim.nodes().map((v) => [v.id, { x: v.x || 0, y: v.y || 0 }]));
+    previous.current = points;
+    setPositions(points);
     if (!paused) sim.alpha(0.35).restart();
   };
   return (
@@ -246,7 +256,8 @@ function Canvas({
         <MiniMap nodeColor={(n) => (n.data.focus ? '#b28e4e' : '#85a999')} pannable zoomable />
       </ReactFlow>
       <div className="graph-help">
-        Перетаскивайте круги и фон · Колёсико — масштаб · Наведите на человека, чтобы подсветить связи
+        {paused ? 'Раскладка закреплена' : 'Автоматическое движение включено'} · Перетаскивайте круги и фон ·
+        «Упорядочить» уменьшает пересечения линий
       </div>
       <div className="tree-view-buttons">
         <button onClick={() => setCenter(0, 0, { zoom: 0.9, duration: 350 })}>
@@ -260,13 +271,16 @@ function Canvas({
           {paused ? <Play size={16} /> : <Pause size={16} />} {paused ? 'Оживить' : 'Пауза'}
         </button>
         <button
-          title="Перестроить граф"
+          title="Уменьшить пересечения линий и закрепить расположение"
           onClick={() => {
+            setPaused(true);
             previous.current.clear();
+            arrangementKey.current = '';
             setRestart((n) => n + 1);
           }}
         >
           <RotateCcw size={16} />
+          Упорядочить
         </button>
       </div>
       <div className="graph-legend">

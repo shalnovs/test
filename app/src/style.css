@@ -1204,6 +1204,36 @@ button strong {
 .tree-toolbar {
   flex-wrap: wrap;
 }
+.tree-display-switch {
+  display: inline-flex;
+  margin-bottom: 18px;
+}
+.tree-display-switch button {
+  gap: 8px;
+  min-width: 120px;
+}
+.family-tree {
+  height: min(76vh, 850px);
+  min-height: 540px;
+}
+.tree-person-node .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+.tree-person-node strong,
+.tree-person-node small,
+.tree-person-node em {
+  display: block;
+}
+.tree-person-node strong {
+  font-size: 14px;
+}
+.tree-person-node small,
+.tree-person-node em {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
 .kinship-panel {
   margin-top: 24px;
   padding: 22px;
@@ -4151,6 +4181,9 @@ button strong {
   font-size: 11px;
   line-height: 1.35;
   color: #385544;
+  background: #f8faf5f0;
+  padding: 2px 4px;
+  border-radius: 5px;
   pointer-events: none;
   text-shadow: 0 1px 4px white;
 }

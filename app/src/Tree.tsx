@@ -1,12 +1,16 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
-import { GitBranch, Users, ArrowUpRight, Focus } from 'lucide-react';
+import { GitBranch, Network, Users, ArrowUpRight, Focus } from 'lucide-react';
 import { useArchive } from './context';
 import { Avatar, PersonPicker, Empty } from './components';
 import { fullName } from './api';
 import { siblingsAndCousins } from './kinship';
 import { FamilyGraph } from './FamilyGraph';
+import { FamilyTree } from './FamilyTree';
+import { useFamilyView } from './familyView';
 export function Tree() {
   const { archive, person, selectedPersonId, selectPerson } = useArchive();
+  const [view, setView] = useFamilyView(archive.tree_id);
+  const FamilyCanvas = view === 'tree' ? FamilyTree : FamilyGraph;
   const [localRoot, setRoot] = useState(
     () => archive.data.people.find((p) => p.external_id === 'I1')?.id || archive.data.people[0]?.id || '',
   );
@@ -34,16 +38,35 @@ export function Tree() {
       <div className="page-heading compact">
         <div>
           <div className="eyebrow">СВЯЗИ ПОКОЛЕНИЙ</div>
-          <h1>Семейный граф</h1>
+          <h1>{view === 'tree' ? 'Семейное дерево' : 'Семейный граф'}</h1>
           <p>
-            Нажмите на круг — человек станет центром. Наведите мышку для подсветки связей; круги можно
-            перетаскивать.
+            {view === 'tree'
+              ? 'Родители расположены выше детей. Нажмите на человека — он станет центром; стрелка открывает его карточку.'
+              : 'Нажмите на круг — человек станет центром. Наведите мышку для подсветки связей; круги можно перетаскивать.'}
           </p>
         </div>
         <div className="page-badge">
           <GitBranch size={18} />
           {archive.data.people.length} человек
         </div>
+      </div>
+      <div className="segmented tree-display-switch" role="group" aria-label="Вид семейных связей">
+        <button
+          className={view === 'graph' ? 'active' : ''}
+          aria-pressed={view === 'graph'}
+          onClick={() => setView('graph')}
+        >
+          <Network size={18} />
+          Граф
+        </button>
+        <button
+          className={view === 'tree' ? 'active' : ''}
+          aria-pressed={view === 'tree'}
+          onClick={() => setView('tree')}
+        >
+          <GitBranch size={18} />
+          Дерево
+        </button>
       </div>
       <div className="toolbar tree-toolbar">
         <PersonPicker value={root} onChange={choose} empty="От кого строить дерево" />
@@ -96,7 +119,7 @@ export function Tree() {
         </section>
       )}
       {archive.data.people.length ? (
-        <FamilyGraph
+        <FamilyCanvas
           root={root}
           mode={mode}
           extended={extended}
