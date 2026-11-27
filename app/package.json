@@ -19,7 +19,7 @@
     "@tiptap/pm": "3.35.0",
     "@tiptap/react": "3.35.0",
     "@tiptap/starter-kit": "3.35.0",
-    "@vladmandic/face-api": "1.8.05",
+    "@vladmandic/face-api": "1.7.15",
     "@xyflow/react": "^12.11.0",
     "d3-force": "3.0.0",
     "leaflet": "1.9.4",
@@ -44,3 +44,4 @@
     "vitest": "^4.0.0"
   }
 }
+
