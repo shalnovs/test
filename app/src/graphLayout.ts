@@ -33,7 +33,12 @@ export function graphModel(data: ArchiveData, root: string, mode: string, extend
           source: r.from_id,
           target: r.to_id,
           kind: r.kind,
-          label: r.kind === 'partner' ? 'Брак' : 'Родитель → ребёнок',
+          label:
+            r.kind === 'partner'
+              ? 'Брак'
+              : r.parentage && r.parentage !== 'birth'
+                ? 'Приёмная / другая семейная связь'
+                : 'Родитель → ребёнок',
         }));
   return { nodes, links };
 }

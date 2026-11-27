@@ -36,8 +36,11 @@ export const initials = (p?: Partial<Item>) =>
   p ? [p.given_name?.[0], p.surname?.[0]].filter(Boolean).join('') : '?';
 export const dateLabel = (v: string) =>
   /^\d{4}-\d{2}-\d{2}$/.test(v) ? v.split('-').reverse().join('.') : v || 'Не указано';
-export const years = (p: Partial<Item>) =>
-  `${p.birth_date?.slice(0, 4) || '?'}${p.death_date ? ' — ' + p.death_date.slice(0, 4) : p.alive === false ? ' — ?' : ''}`;
+export const years = (p: Partial<Item>) => {
+  const year = (date: string, uncertain: boolean) =>
+    `${uncertain ? '≈' : ''}${date?.match(/\b\d{4}\b/)?.[0] || '?'}`;
+  return `${year(p.birth_date, p.birth_date_uncertain)}${p.death_date ? ' — ' + year(p.death_date, p.death_date_uncertain) : p.alive === false ? ' — ?' : ''}`;
+};
 export function plainText(v: any): string {
   if (!v) return '';
   if (v.type === 'text') return v.text || '';

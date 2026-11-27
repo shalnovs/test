@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { RelationshipForm } from './RelationshipForm';
 import { Plus, ArrowUpRight, Edit3, Trash2, Check, Link2, Camera, CalendarDays } from 'lucide-react';
 import { api, dateLabel, fullName, years, mentionedPeople, type Item } from './api';
 import { useArchive } from './context';
@@ -75,7 +76,8 @@ export function PersonForm({ person: original, onClose }: { person?: Item; onClo
       avatar_id: '',
     },
   );
-  const set = (k: string, v: any) => setP({ ...p, [k]: v });
+  const set = (k: string, v: any) =>
+    setP({ ...p, [k]: v, ...(k.endsWith('_date') ? { [k + '_uncertain']: false } : {}) });
   const submit = () =>
     run(async () => {
       const result = await api('save', {
@@ -294,6 +296,13 @@ export function PersonPanel({ id, onClose }: { id: string; onClose: () => void }
                   <span>
                     <small>
                       {role}
+                      {r.parentage && r.parentage !== 'birth'
+                        ? r.parentage === 'adopted'
+                          ? ' · усыновление'
+                          : r.parentage === 'foster'
+                            ? ' · опека'
+                            : ` · ${r.parentage}`
+                        : ''}
                       {r.start_date ? ' · ' + dateLabel(r.start_date) : ''}
                     </small>
                     <strong>{fullName(other)}</strong>
@@ -465,59 +474,6 @@ export function AutobiographyEditor({ person, onClose }: { person: Item; onClose
           </button>
         </footer>
       </form>
-    </Modal>
-  );
-}
-function RelationshipForm({ root, onClose }: { root: string; onClose: () => void }) {
-  const { run } = useArchive();
-  const [target, setTarget] = useState('');
-  const [kind, setKind] = useState('mother');
-  const [date, setDate] = useState('');
-  return (
-    <Modal title="Родственная связь" onClose={onClose}>
-      <div className="form-grid">
-        <Field label="Кем приходится выбранному человеку" wide>
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="mother">Мать</option>
-            <option value="father">Отец</option>
-            <option value="child">Ребёнок</option>
-            <option value="partner">Супруг / супруга</option>
-          </select>
-        </Field>
-        <Field label="Человек" wide>
-          <PersonPicker value={target} onChange={setTarget} exclude={[root]} />
-        </Field>
-        {kind === 'partner' && (
-          <Field label="Дата брака" wide>
-            <input value={date} onChange={(e) => setDate(e.target.value)} placeholder="ГГГГ-ММ-ДД" />
-          </Field>
-        )}
-      </div>
-      <footer className="modal-footer">
-        <button onClick={onClose}>Отмена</button>
-        <button
-          className="primary"
-          disabled={!target}
-          onClick={() =>
-            run(async () => {
-              await api('save', {
-                kind: 'relationships',
-                record: {
-                  kind: kind === 'partner' ? 'partner' : 'parent',
-                  from_id: ['mother', 'father'].includes(kind) ? target : root,
-                  to_id: ['mother', 'father'].includes(kind) ? root : target,
-                  role: ['mother', 'father'].includes(kind) ? kind : '',
-                  start_date: date,
-                },
-                title: 'Добавлена родственная связь',
-              });
-              onClose();
-            }, 'Родственная связь сохранена')
-          }
-        >
-          Сохранить связь
-        </button>
-      </footer>
     </Modal>
   );
 }

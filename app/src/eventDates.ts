@@ -39,6 +39,7 @@ export function historicalDate(value: string): DateSpan | null {
   return dateSpan(years[0]);
 }
 export function eventSpan(event: Record<string, any>): DateSpan | null {
+  if (event.date_uncertain) return null;
   const start = dateSpan(event.start_date) || historicalDate(event.date_text || '');
   if (!start) return null;
   const end = dateSpan(event.end_date);

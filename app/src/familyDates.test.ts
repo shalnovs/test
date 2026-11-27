@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { vitalEvents, anniversaryEvents } from './familyDates';
 import { selectMaterials } from './materials';
 import type { ArchiveData } from './api';
+import { eventSpan } from './eventDates';
 const data: ArchiveData = {
   people: [
     { id: 'p', given_name: 'Анна', birth_date: '29.02.1980', death_date: '2020-05-10', alive: false },
@@ -17,6 +18,25 @@ const data: ArchiveData = {
   facts: [],
   events: [],
 };
+it('preserves coordinates and never turns approximate imported dates into exact anniversaries', () => {
+  const d = structuredClone(data);
+  d.people = [
+    {
+      id: 'exact',
+      given_name: 'Анна',
+      birth_date: '1950-03-02',
+      birth_place: 'Село',
+      birth_latitude: 55.1,
+      birth_longitude: 47.2,
+    },
+    { id: 'approximate', given_name: 'Иван', birth_date: 'около 1950-03-02', birth_date_uncertain: true },
+  ];
+  const events = vitalEvents(d);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ latitude: 55.1, longitude: 47.2, place: 'Село' });
+  expect(anniversaryEvents(d, 2026).map((e) => e.source_person_id)).toEqual(['exact']);
+  expect(eventSpan({ id: 'unknown-date', date_text: 'BEF 1900', date_uncertain: true })).toBeNull();
+});
 it('includes original birth/death dates and annual birthday, jubilee and death memorial', () => {
   expect(vitalEvents(data).map((e) => e.start_date)).toEqual([
     '1980-02-29',

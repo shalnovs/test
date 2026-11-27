@@ -109,7 +109,11 @@ function Canvas({ root, mode, extended, group, focusTick, onFocus }: Props) {
         strokeWidth: 1.7,
         strokeDasharray: marriage ? '5 5' : undefined,
       },
-      label: marriage ? 'брак' : undefined,
+      label: marriage
+        ? 'брак'
+        : r.parentage && r.parentage !== 'birth'
+          ? 'приёмная / другая связь'
+          : undefined,
       labelStyle: { fill: '#8d7559', fontSize: 10 },
     };
   });

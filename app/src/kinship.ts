@@ -8,9 +8,11 @@ export type Relative = {
   reason: string;
   paths: string[][];
 };
-export function parentIndex(data: ArchiveData) {
+export function parentIndex(data: ArchiveData, biologicalOnly = false) {
   const index = new Map<string, string[]>();
-  for (const r of data.relationships.filter((r) => r.kind === 'parent'))
+  for (const r of data.relationships.filter(
+    (r) => r.kind === 'parent' && (!biologicalOnly || !r.parentage || r.parentage === 'birth'),
+  ))
     index.set(r.to_id, [...new Set([...(index.get(r.to_id) || []), r.from_id])]);
   return index;
 }
@@ -32,7 +34,7 @@ const cousinName = (degree: number) =>
   ['Двоюродные', 'Троюродные', 'Четвероюродные', 'Пятиюродные', 'Шестиюродные'][degree - 1] ||
   `${degree + 1}-юродные`;
 export function siblingsAndCousins(data: ArchiveData, root: string): Relative[] {
-  const index = parentIndex(data),
+  const index = parentIndex(data, true),
     own = index.get(root) || [],
     lineage = ancestors(index, root);
   const people = new Map(data.people.map((p) => [p.id, p]));

@@ -15,6 +15,14 @@ function edge(d: ArchiveData, a: string, b: string, kind = 'parent') {
   for (const id of [a, b]) if (!d.people.some((p) => p.id === id)) d.people.push({ id, given_name: id });
   d.relationships.push({ id: `${a}-${b}`, from_id: a, to_id: b, kind });
 }
+it('keeps adoptive parents in the family graph without treating them as blood ancestry', () => {
+  const d = blank();
+  edge(d, 'parent', 'root');
+  edge(d, 'parent', 'adopted');
+  d.relationships[1].parentage = 'adopted';
+  expect(familySelection(d, 'adopted', 'family', false).has('parent')).toBe(true);
+  expect(siblingsAndCousins(d, 'root').some((r) => r.person.id === 'adopted')).toBe(false);
+});
 it('distinguishes full, half, uncertain and step siblings without inventing a missing parent', () => {
   const d = blank();
   for (const child of ['root', 'full', 'half', 'unknown']) edge(d, 'mother', child);

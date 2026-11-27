@@ -434,7 +434,12 @@ export function EventForm({ original, onClose }: { original?: Item; onClose: () 
     [error, setError] = useState(''),
     [mapOpen, setMapOpen] = useState(false),
     [center, setCenter] = useState<[number, number]>();
-  const set = (key: string, value: any) => setE((prev: any) => ({ ...prev, [key]: value }));
+  const set = (key: string, value: any) =>
+    setE((prev: any) => ({
+      ...prev,
+      [key]: value,
+      ...(['start_date', 'end_date'].includes(key) ? { date_uncertain: false } : {}),
+    }));
   const point: MapPoint[] =
     typeof e.latitude === 'number' && typeof e.longitude === 'number'
       ? [{ id: 'chosen', title: e.place || 'Место события', lat: e.latitude, lon: e.longitude }]

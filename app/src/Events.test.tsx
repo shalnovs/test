@@ -92,6 +92,35 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('event forms and calendar interactions without visual testing', () => {
+  it('allows an imported approximate event to receive a confirmed calendar date', async () => {
+    setup(
+      <EventForm
+        original={{
+          id: 'approximate',
+          title: 'Переезд',
+          description: '',
+          place: '',
+          date_text: 'ABT 1900',
+          date_uncertain: true,
+        }}
+        onClose={close}
+      />,
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Начало' }), { target: { value: '1901-05-02' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Сохранить событие' }));
+    await waitFor(() =>
+      expect(api).toHaveBeenCalledWith(
+        'save',
+        expect.objectContaining({
+          record: expect.objectContaining({
+            start_date: '1901-05-02',
+            date_uncertain: false,
+            date_text: 'ABT 1900',
+          }),
+        }),
+      ),
+    );
+  });
   it('lists existing events and opens their cards', () => {
     setup(<Events />);
     fireEvent.click(screen.getByRole('button', { name: /Поездка/ }));

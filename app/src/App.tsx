@@ -56,7 +56,7 @@ const nav = [
   ['texts', 'Тексты', BookOpen],
   ['sources', 'Источники', Library],
   ['cleanup', 'Дубли и корзина', Copy],
-  ['exchange', 'Обмен ветками', ArrowLeftRight],
+  ['exchange', 'Импорт и обмен', ArrowLeftRight],
   ['history', 'История', History],
 ] as const;
 const titles = Object.fromEntries(nav.map(([key, title]) => [key, title]));
@@ -223,7 +223,7 @@ export default function App() {
               <FolderOpen size={17} />
               Открыть / создать архив
             </button>
-            <span className="app-version">Родословная 1.7.1 · Локальный архив</span>
+            <span className="app-version">Родословная 1.8.0 · Локальный архив</span>
           </div>
         </aside>
         <div className="app-main">

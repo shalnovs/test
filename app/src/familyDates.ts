@@ -11,6 +11,7 @@ export function vitalEvents(data: ArchiveData): Item[] {
       ['birth', p.birth_date, p.birth_place, 'Рождение'],
       ['death', p.death_date, p.death_place, 'Смерть'],
     ]) {
+      if (p[`${kind}_date_uncertain`]) continue;
       const d = historicalDate(raw || '');
       if (!d) continue;
       result.push({
@@ -21,6 +22,8 @@ export function vitalEvents(data: ArchiveData): Item[] {
         start_date: value(d),
         end_date: '',
         place: place || '',
+        latitude: p[`${kind}_latitude`],
+        longitude: p[`${kind}_longitude`],
         person_ids: [p.id],
         media_ids: [],
         cover_media_id: cover,
@@ -33,6 +36,7 @@ export function vitalEvents(data: ArchiveData): Item[] {
     }
   }
   for (const r of data.relationships.filter((r) => r.kind === 'partner')) {
+    if (r.date_uncertain) continue;
     const d = historicalDate(r.start_date || '');
     if (!d) continue;
     const people = [r.from_id, r.to_id].filter((id) => data.people.some((p) => p.id === id));
@@ -43,6 +47,8 @@ export function vitalEvents(data: ArchiveData): Item[] {
       start_date: value(d),
       end_date: '',
       place: r.place || '',
+      latitude: r.latitude,
+      longitude: r.longitude,
       person_ids: people,
       media_ids: [],
       generated: true,

@@ -17,6 +17,8 @@ mod maintenance;
 mod purge;
 mod media_import;
 mod recognition;
+mod relatives;
+mod gedcom;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub type Data = BTreeMap<String, BTreeMap<String, Value>>;
@@ -1168,7 +1170,6 @@ impl Engine {
         let hash = digest(&manifest);
         let manifest_id = stable(&format!("received-manifest:{hash}"));
         let manifest_file = format!("media/{hash}.json");
-        fs::write(self.safe_file(&manifest_file)?, &manifest).map_err(|e| e.to_string())?;
         put(
             &mut d,
             "media",
@@ -1213,6 +1214,22 @@ impl Engine {
                 matched += 1;
                 let mut updated = local.clone();
                 for (k, v) in incoming.as_object().unwrap() {
+                    let related_field = match k.as_str() {
+                        "birth_date_uncertain" => Some("birth_date"),
+                        "death_date_uncertain" => Some("death_date"),
+                        "birth_latitude" | "birth_longitude" => Some("birth_place"),
+                        "death_latitude" | "death_longitude" => Some("death_place"),
+                        _ => None,
+                    };
+                    if let Some(field) = related_field {
+                        let old = local.get(field).unwrap_or(&Value::Null);
+                        let received = incoming.get(field).unwrap_or(&Value::Null);
+                        if blank(old) || old == received || (!baseline.is_null() && baseline.get(field) == Some(old)) ||
+                            resolutions.get(format!("{iid}:{field}")).and_then(Value::as_str) == Some("incoming") {
+                            if !blank(v) || old != received { updated[k] = v.clone(); }
+                        }
+                        continue;
+                    }
                     if [
                         "id",
                         "updated_at",
@@ -1464,7 +1481,14 @@ impl Engine {
             "_imports",
             json!({"id":package.package_id,"title":package.title,"at":now()}),
         );
-        self.commit(&d, &format!("Объединение ветки: {}", package.title))?;
+        validate(&d)?;
+        let manifest_path = self.safe_file(&manifest_file)?;
+        let manifest_existed = manifest_path.exists();
+        fs::write(&manifest_path, &manifest).map_err(|e| e.to_string())?;
+        if let Err(error) = self.commit(&d, &format!("Объединение ветки: {}", package.title)) {
+            if !manifest_existed { let _ = fs::remove_file(manifest_path); }
+            return Err(error);
+        }
         Ok(json!({"added":added,"matched":matched,"conflicts":conflicts}))
     }
     fn import(&mut self, p: &Value) -> Result<Value> {
@@ -1522,6 +1546,9 @@ impl Engine {
                 )
             }
             "save" => self.save(&p),
+            "save_relative" => self.save_relative(&p),
+            "gedcom_preview" => self.gedcom_preview(&p),
+            "gedcom_import" => self.gedcom_import(&p),
             "trash_preview" => self.trash_preview(&p),
             "trash_items" => self.trash_items(&p),
             "restore_items" => self.restore_items(&p),

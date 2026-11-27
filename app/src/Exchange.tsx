@@ -17,6 +17,7 @@ const labels: Record<string, string> = {
   given_name: 'Имя',
   patronymic: 'Отчество',
   birth_surname: 'Фамилия при рождении',
+  second_surname: 'Вторая фамилия',
   birth_date: 'Дата рождения',
   death_date: 'Дата смерти',
   birth_place: 'Место рождения',
@@ -30,14 +31,15 @@ const labels: Record<string, string> = {
   email: 'Эл. почта',
 };
 export function Exchange() {
-  const [tab, setTab] = useState('export');
+  const { archive } = useArchive();
+  const [tab, setTab] = useState(archive.data.people.length ? 'export' : 'gedcom');
   return (
     <>
       <div className="page-heading">
         <div>
           <div className="eyebrow">ОБЩАЯ ИСТОРИЯ</div>
-          <h1>Обмен ветками</h1>
-          <p>Делитесь частью дерева и дополняйте его вместе с близкими</p>
+          <h1>Импорт и обмен</h1>
+          <p>Переносите родословную из других программ и объединяйте семейные ветки</p>
         </div>
         <div className="page-badge">
           <GitBranch size={18} />С сохранением связей
@@ -69,6 +71,9 @@ export function Exchange() {
         </div>
       </div>
       <div className="tabs">
+        <button className={tab === 'gedcom' ? 'active' : ''} onClick={() => setTab('gedcom')}>
+          <Upload size={17} /> Из других программ · GEDCOM
+        </button>
         <button className={tab === 'export' ? 'active' : ''} onClick={() => setTab('export')}>
           <Download size={17} />
           Поделиться веткой
@@ -78,7 +83,11 @@ export function Exchange() {
           Получить и объединить
         </button>
       </div>
-      {tab === 'export' ? <ExportBranch /> : <ImportBranch />}
+      {tab === 'export' ? (
+        <ExportBranch />
+      ) : (
+        <ImportBranch key={tab} format={tab === 'gedcom' ? 'gedcom' : 'familyzip'} />
+      )}
     </>
   );
 }
@@ -204,8 +213,13 @@ function ExportBranch() {
     </div>
   );
 }
-function ImportBranch() {
+export function ImportBranch({ format = 'familyzip' }: { format?: 'gedcom' | 'familyzip' }) {
   const { archive, run, busy, notify } = useArchive();
+  const gedcom = format === 'gedcom';
+  const [encoding, setEncoding] = useState('auto');
+  const [includeMedia, setIncludeMedia] = useState(false);
+  const [limit, setLimit] = useState(100);
+  const [query, setQuery] = useState('');
   const [path, setPath] = useState('');
   const [preview, setPreview] = useState<any>(null);
   const [decisions, setDecisions] = useState<Record<string, string>>({});
@@ -214,13 +228,19 @@ function ImportBranch() {
   const [expanded, setExpanded] = useState('');
   const choose = () =>
     run(async () => {
-      const path = await pickFile();
+      const path = await pickFile(false, '', gedcom ? ['ged', 'gedcom'] : ['familyzip']);
       if (!path) return;
-      const p = await api('import_preview', { path });
+      const p = await api(gedcom ? 'gedcom_preview' : 'import_preview', {
+        path,
+        encoding,
+        include_media: includeMedia,
+      });
       setPath(path);
       setPreview(p);
       setResult(null);
       setResolutions({});
+      setLimit(100);
+      setQuery('');
       setDecisions(
         Object.fromEntries(
           p.people.map((x: any) => [x.incoming.id, x.known_id || (x.candidates.length ? '' : '__new__')]),
@@ -228,16 +248,46 @@ function ImportBranch() {
       );
     });
   const unresolved = preview?.people.filter((x: any) => !decisions[x.incoming.id]).length || 0;
+  const included =
+    preview?.people.filter((x: any) => decisions[x.incoming.id] && decisions[x.incoming.id] !== '__skip__')
+      .length || 0;
+  const filtered = (preview?.people || []).filter((row: any) =>
+    [fullName(row.incoming), row.incoming.birth_surname, row.incoming.second_surname, row.incoming.birth_date]
+      .join(' ')
+      .toLocaleLowerCase('ru')
+      .replaceAll('ё', 'е')
+      .includes(query.trim().toLocaleLowerCase('ru').replaceAll('ё', 'е')),
+  );
+  useEffect(() => {
+    setPreview(null);
+    setResult(null);
+    setPath('');
+  }, [archive.tree_id]);
   const merge = () =>
-    run(async () => {
-      const r = await api('import', { path, decisions, resolutions });
-      setResult(r);
-    }, 'Ветка объединена');
+    run(
+      async () => {
+        const r = await api(gedcom ? 'gedcom_import' : 'import', {
+          path,
+          decisions,
+          resolutions,
+          ...(gedcom
+            ? {
+                encoding,
+                include_media: includeMedia,
+                fingerprint: preview.fingerprint,
+                tree_id: preview.tree_id,
+              }
+            : {}),
+        });
+        setResult(r);
+      },
+      gedcom ? 'Родословная импортирована' : 'Ветка объединена',
+    );
   if (result)
     return (
       <section className="surface merge-success">
         <CheckCircle2 size={52} />
-        <h2>{result.duplicate ? 'Эта ветка уже была получена' : 'История семьи дополнена'}</h2>
+        <h2>{result.duplicate ? 'Этот файл уже был импортирован' : 'История семьи дополнена'}</h2>
         <div className="merge-totals">
           <div>
             <strong>{result.added || 0}</strong>
@@ -252,34 +302,105 @@ function ImportBranch() {
             <span>различий сохранено</span>
           </div>
         </div>
-        <p>Связи, фотографии и тексты объединены. Отменить операцию можно в разделе «История».</p>
+        <p>
+          {gedcom
+            ? 'Люди и связанные сведения импортированы. Исходный GEDCOM сохранён в документах. '
+            : 'Связи, фотографии и тексты объединены. '}
+          Отменить операцию можно в разделе «История».
+        </p>
         <button
           onClick={() => {
             setPreview(null);
             setResult(null);
           }}
         >
-          Получить другую ветку
+          {gedcom ? 'Импортировать другой GEDCOM' : 'Получить другую ветку'}
         </button>
       </section>
     );
   return (
     <>
+      {gedcom && (
+        <section className="surface gedcom-intro">
+          <h2>Перенести родословную из другого сервиса</h2>
+          <p>
+            В исходном сервисе выберите экспорт дерева в GEDCOM, сохраните файл .ged и откройте его здесь.
+            Формат подходит для обмена с Familio, MyHeritage, «Древом Жизни» и другими программами.
+          </p>
+          <p className="muted">
+            Сначала вы увидите людей и возможные совпадения. Запись в архив начнётся после подтверждения.
+            Поддерживаются GEDCOM 5.x и 7; для экспорта рекомендуется UTF-8.
+          </p>
+          <div className="gedcom-options">
+            <Field label="Кодировка GEDCOM">
+              <select
+                value={encoding}
+                disabled={busy}
+                onChange={(e) => {
+                  setEncoding(e.target.value);
+                  setPreview(null);
+                }}
+              >
+                <option value="auto">Автоматически: UTF-8 / UTF-16</option>
+                <option value="windows-1251">Windows-1251 — старый русский файл</option>
+              </select>
+            </Field>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={includeMedia}
+                disabled={busy}
+                onChange={(e) => {
+                  setIncludeMedia(e.target.checked);
+                  setPreview(null);
+                }}
+              />
+              Загрузить фотографии и документы из папки рядом с GEDCOM
+            </label>
+          </div>
+          <p className="muted small">
+            Для вложений сохраните структуру папок из исходной выгрузки. Интернет-ссылки и пути вне папки
+            GEDCOM остаются в исходном файле; программа покажет список недоступных вложений.
+          </p>
+        </section>
+      )}
       <section className="import-file surface">
         <FileArchive size={34} />
         <div>
-          <h2>{preview ? preview.title : 'Откройте полученную ветку'}</h2>
+          <h2>
+            {preview ? preview.title : gedcom ? 'Выберите файл родословной' : 'Откройте полученную ветку'}
+          </h2>
           <p>
             {preview
-              ? `${preview.people.length} человек · ${preview.counts.media || 0} материалов · ${preview.counts.texts || 0} текстов`
-              : 'Выберите файл .familyzip, который вам передали'}
+              ? `${preview.people.length} человек · ${preview.counts.relationships || 0} связей · ${preview.counts.media || 0} материалов · ${preview.counts.texts || 0} текстов · ${preview.counts.events || 0} событий`
+              : gedcom
+                ? 'Файл .ged или .gedcom из другой программы'
+                : 'Выберите файл .familyzip, который вам передали'}
           </p>
         </div>
         <button className="primary" onClick={choose} disabled={busy}>
           <Upload size={17} />
-          {preview ? 'Другой файл' : 'Выбрать файл'}
+          {preview ? 'Другой файл' : gedcom ? 'Выбрать GEDCOM' : 'Выбрать файл'}
         </button>
       </section>
+      {gedcom && preview && (
+        <section className="surface gedcom-report">
+          <p>
+            GEDCOM {preview.gedcom_version || 'без номера версии'} · {preview.encoding}. Исходный файл будет
+            сохранён целиком в «Документы».
+          </p>
+          {!!preview.warnings?.length && (
+            <details open>
+              <summary>Особенности переноса: {preview.warnings.length}</summary>
+              <ul>
+                {preview.warnings.map((warning: string, i: number) => (
+                  <li key={i}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </section>
+      )}
       {preview?.already_imported && (
         <div className="notice">
           <ShieldCheck size={20} />
@@ -300,7 +421,18 @@ function ImportBranch() {
             </span>
           </div>
           <div className="match-list">
-            {preview.people.map((row: any) => {
+            <label className="field">
+              <span>Найти человека в файле</span>
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setLimit(100);
+                }}
+                placeholder="Фамилия, имя или год рождения"
+              />
+            </label>
+            {filtered.slice(0, limit).map((row: any) => {
               const p = row.incoming;
               const decision = decisions[p.id] || '';
               const local = archive.data.people.find((p) => p.id === decision);
@@ -365,6 +497,23 @@ function ImportBranch() {
                       </button>
                     )}
                   </div>
+                  {gedcom && (
+                    <details className="incoming-details">
+                      <summary>Сведения из файла</summary>
+                      <dl>
+                        {Object.entries(labels)
+                          .filter(([key]) => p[key] !== undefined && p[key] !== null && p[key] !== '')
+                          .map(([key, label]) => (
+                            <div key={key}>
+                              <dt>{label}</dt>
+                              <dd>
+                                {typeof p[key] === 'boolean' ? (p[key] ? 'Да' : 'Нет') : String(p[key])}
+                              </dd>
+                            </div>
+                          ))}
+                      </dl>
+                    </details>
+                  )}
                   {expanded === p.id && local && (
                     <div className="field-conflicts">
                       <p>
@@ -408,14 +557,19 @@ function ImportBranch() {
               );
             })}
           </div>
+          {filtered.length > limit && (
+            <button onClick={() => setLimit(limit + 100)}>
+              Показать ещё · осталось {filtered.length - limit}
+            </button>
+          )}
           <div className="merge-bar">
             <div>
               <strong>Различия не теряются</strong>
               <p>Объединение сохраняется одной операцией с возможностью отмены.</p>
             </div>
-            <button className="primary" disabled={!!unresolved || busy} onClick={merge}>
+            <button className="primary" disabled={!!unresolved || !included || busy} onClick={merge}>
               <GitBranch size={18} />
-              Объединить ветку
+              {gedcom ? 'Подтвердить импорт' : 'Объединить ветку'}
             </button>
           </div>
         </>
